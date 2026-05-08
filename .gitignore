@@ -1,0 +1,59 @@
+# --- Local-only / 不得推送到远程（维护者策略）---
+# 产品文档、开发计划、AI 提示词、审查提示、智能体说明、编辑器规则等一律仅存本机，
+# 勿 `git add -f` 强推；备份请用私有渠道或本机副本。
+/docs/
+AGENTS.md
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Go
+/bin/
+/dist/
+/build/
+coverage.out
+coverage.html
+*.exe
+*.test
+*.out
+vendor/
+
+# Node / Next.js (frontend)
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# SQLite & local data (runtime DB must not be committed)
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Docker / local overrides
+docker-compose.override.yml
+
+# Misc
+tmp/
+temp/
+*.log
