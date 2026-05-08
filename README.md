@@ -18,6 +18,15 @@
 | `deploy/` | 预留容器与编排 |
 | `scripts/` | 可选脚本 |
 
+## Configuration
+
+进程通过环境变量配置（开发时可复制 [`.env.example`](.env.example) 为 `.env` 并自行导出；当前实现使用 `os.Getenv`，不自动加载 `.env` 文件）。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `DNSFLEET_DB_PATH` | `./data/dnsfleet.db` | SQLite **数据库文件**路径（环境变量可为相对路径；`config.Load` 会解析为**绝对路径**再交给后续 Open，避免工作目录变化导致找不到库）；不支持 `:memory:` / `file::memory:`；父目录在 `Load` 时创建 |
+| `DNSFLEET_HTTP_ADDR` | `:8080` | HTTP 监听地址（在 Step 1.5 接入服务后生效） |
+
 ## 状态
 
 目录骨架与忽略规则已就绪；业务实现按维护者本机路线图自 Step 1 起推进。
