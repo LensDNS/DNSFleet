@@ -31,9 +31,22 @@
 
 最小进程：`go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时会初始化 SQLite 并执行 GORM `AutoMigrate`，然后监听 HTTP。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
 
+## 开发验收（Step 1.6）
+
+在仓库根目录执行（与维护者本机 `docs/详细开发计划.md` §1.6 一致；**不**自动加载 `.env` 时须自行导出变量）：
+
+```bash
+go fmt ./...
+go vet ./...
+go test ./...
+go build -o bin/dnsfleet ./cmd/dnsfleet
+```
+
+在 **Windows** 上，构建产物多为 `bin\dnsfleet.exe`；`bin/` 已列入 `.gitignore`。
+
 ## 状态
 
-Step 1.5 已提供可运行入口与健康检查；业务 API（节点/全局配置等）按路线图后续 Step 推进。
+Step 1（基础设施、模型、DB、最小 HTTP、质量门禁）已按路线图可验收；业务 API 与 AdGH 客户端自 **Step 2** 起推进。
 
 ## 许可证
 
