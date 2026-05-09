@@ -15,6 +15,6 @@
 
 ## 后续 Step 预告
 
-- `internal/adguard` — AdGuard Home HTTP 客户端（Step 2）；**契约**见仓库 [`api/ADGUARD_HOME_CONTROL_API.md`](../api/ADGUARD_HOME_CONTROL_API.md)（与 OpenAPI 对齐，可进远程）
+- `internal/adguard` — AdGuard Home HTTP 客户端（Step 2.1 传输与认证骨架；Step 2.2 业务能力）；说明见 [`internal/adguard/README.md`](adguard/README.md)，**契约**见 [`api/ADGUARD_HOME_CONTROL_API.md`](../api/ADGUARD_HOME_CONTROL_API.md)
 - `internal/http` 或 `internal/server` — Echo/Fiber 路由与中间件（Step 3）
 - `internal/stream` — 日志 WebSocket 聚合（Step 4）
