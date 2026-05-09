@@ -57,3 +57,6 @@ docker-compose.override.yml
 tmp/
 temp/
 *.log
+
+# Local clone of AdGuard Home (reference / upstream source; do not push)
+AdGuardHome/

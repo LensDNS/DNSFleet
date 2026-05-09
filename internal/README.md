@@ -6,7 +6,7 @@
 
 ## 已建脚手架（Step 1.1）
 
-- `internal/models` — GORM 领域模型（当前仅 `doc.go`；实体在 Step 1.3）
+- `internal/models` — GORM 领域模型（`Node`、`GlobalConfig` 及常量；OpenDB/AutoMigrate 在 §1.4）
 - `internal/db` — 数据库连接与迁移（当前仅 `doc.go`；实现在 Step 1.4）
 
 ## Step 1.2
@@ -15,6 +15,6 @@
 
 ## 后续 Step 预告
 
-- `internal/adguard` — AdGuard Home HTTP 客户端（Step 2）
+- `internal/adguard` — AdGuard Home HTTP 客户端（Step 2）；**契约**见仓库 [`api/ADGUARD_HOME_CONTROL_API.md`](../api/ADGUARD_HOME_CONTROL_API.md)（与 OpenAPI 对齐，可进远程）
 - `internal/http` 或 `internal/server` — Echo/Fiber 路由与中间件（Step 3）
 - `internal/stream` — 日志 WebSocket 聚合（Step 4）

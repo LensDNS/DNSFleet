@@ -1,5 +1,7 @@
 # api
 
-预留目录：HTTP API 契约（如 OpenAPI `openapi.yaml`）、对外稳定 DTO 说明等。
+| 文件 | 说明 |
+|------|------|
+| [`ADGUARD_HOME_CONTROL_API.md`](./ADGUARD_HOME_CONTROL_API.md) | **v0.1 权威**：AdGuard Home 控制面 HTTP API（认证、status、dns、rewrite、querylog）及 DNSFleet 与 `Node.AuthKind` 的对齐约束；实现 Step 2–4 前必读。 |
 
-v0.1 可在有稳定路由后再补充；不必为空占坑而提前生成大规格文件。
+其它：将来可在此放置 DNSFleet 自身的 OpenAPI（`openapi.yaml`）或对外 DTO 说明。
