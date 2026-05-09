@@ -10,6 +10,11 @@ import (
 func TestLoad_Defaults(t *testing.T) {
 	t.Setenv(envDBPath, "")
 	t.Setenv(envHTTPAddr, "")
+	t.Setenv(envAdminToken, "")
+	t.Setenv(envAdminInsecure, "")
+	t.Setenv(envSyncMaxConcurrent, "")
+	t.Setenv(envSyncTotalTimeout, "")
+	t.Setenv(envDriftInterval, "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -24,6 +29,15 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.HTTPAddr != defaultHTTPAddr {
 		t.Fatalf("HTTPAddr: got %q want %q", cfg.HTTPAddr, defaultHTTPAddr)
+	}
+	if cfg.SyncMaxConcurrent != defaultSyncConcurrent {
+		t.Fatalf("SyncMaxConcurrent: got %d want %d", cfg.SyncMaxConcurrent, defaultSyncConcurrent)
+	}
+	if cfg.SyncTotalTimeout != defaultDuration || cfg.DriftInterval != defaultDuration {
+		t.Fatalf("durations: sync=%v drift=%v want %v", cfg.SyncTotalTimeout, cfg.DriftInterval, defaultDuration)
+	}
+	if cfg.AdminInsecureDisable {
+		t.Fatal("AdminInsecureDisable should be false when unset")
 	}
 }
 

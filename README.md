@@ -26,10 +26,17 @@
 |------|------|------|
 | `DNSFLEET_DB_PATH` | `./data/dnsfleet.db` | SQLite **数据库文件**路径（环境变量可为相对路径；`config.Load` 会解析为**绝对路径**再交给后续 Open，避免工作目录变化导致找不到库）；不支持 `:memory:` / `file::memory:`；父目录在 `Load` 时创建 |
 | `DNSFLEET_HTTP_ADDR` | `:8080` | HTTP 监听地址（Echo 监听该地址） |
+| `DNSFLEET_ADMIN_TOKEN` | （默认必填） | 单用户 Admin 共享密钥（`Authorization: Bearer` 或 `X-Admin-Token`）。**未**设置 `DNSFLEET_ADMIN_INSECURE_DISABLE=1` 且 token 为空（仅空白）时进程启动失败 |
+| `DNSFLEET_ADMIN_INSECURE_DISABLE` | 未设置 | 仅当值**精确为** `1` 时跳过 Admin 校验且**不要求** token 非空。**禁止在生产或公开镜像中启用** |
+| `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | 对 AdGuard Home 的 HTTP 并发上限；**漂移循环**与 **`POST /api/v1/sync`** **共用**同一 semaphore（任意时刻飞行请求数 ≤ 该值） |
+| `DNSFLEET_SYNC_TOTAL_TIMEOUT` | `5m` | 单次 `POST /api/v1/sync` 的总超时（`time.ParseDuration` 语法；非法则启动失败） |
+| `DNSFLEET_DRIFT_INTERVAL` | `5m` | 漂移检测周期（语法同上）。进程启动后**先立即跑一轮**漂移，再按该间隔 ticker 重复 |
 
-## Run（Step 1.5）
+业务 REST 路径前缀（v0.1 裁决）：**`/api/v1`**（健康检查仍为 **`GET /healthz`**，不经 Admin）。
 
-最小进程：`go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时会初始化 SQLite 并执行 GORM `AutoMigrate`，然后监听 HTTP。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
+## Run
+
+`go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时初始化 SQLite 并 `AutoMigrate`，注册 **`GET /healthz`**（不经 Admin）与 **`/api/v1`** 业务路由（经 Admin，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。HTTP 在独立 goroutine 监听；主 goroutine 等待 **SIGINT/SIGTERM** 后先 `cancel` 漂移用的根 context，再 **`e.Shutdown`**。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
 
 ## 开发验收（Step 1.6）
 
@@ -46,7 +53,7 @@ go build -o bin/dnsfleet ./cmd/dnsfleet
 
 ## 状态
 
-Step 1（基础设施、模型、DB、最小 HTTP、质量门禁）已按路线图可验收；业务 API 与 AdGH 客户端自 **Step 2** 起推进。
+Step 1、Step 2 已验收；**Step 3** 控制面 HTTP（`/api/v1`、Admin、节点 CRUD、全局配置、同步、漂移）已实现；协议细节以本机 `docs/详细开发计划.md` **「Step 3 产品/协议裁决」** 及 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 为准。
 
 ## 许可证
 
