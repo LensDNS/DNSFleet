@@ -7,7 +7,7 @@
 ## 已建脚手架（Step 1.1）
 
 - `internal/models` — GORM 领域模型（`Node`、`GlobalConfig` 及常量；OpenDB/AutoMigrate 在 §1.4）
-- `internal/db` — 数据库连接与迁移（当前仅 `doc.go`；实现在 Step 1.4）
+- `internal/db` — SQLite（`github.com/glebarez/sqlite`）+ GORM `Open` / `Migrate` / `OpenAndMigrate`（Step 1.4）
 
 ## Step 1.2
 
