@@ -98,6 +98,35 @@ func TestAdminOK(t *testing.T) {
 	}
 }
 
+func TestWsLogs_hub_nil_returns_503(t *testing.T) {
+	cfg := baseCfg()
+	dbPath := filepath.Join(t.TempDir(), "ws_hub_nil.db")
+	db, err := fleetdb.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
+	t.Cleanup(func() {
+		sqlDB, _ := db.DB()
+		_ = sqlDB.Close()
+	})
+	e := echo.New()
+	deps := Deps{
+		Config:  cfg,
+		DB:      db,
+		AdGHSem: make(chan struct{}, cfg.SyncMaxConcurrent),
+	}
+	Mount(e, deps)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws/logs", nil)
+	req.Header.Set("Authorization", "Bearer "+cfg.AdminToken)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
 func adguardOKHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
