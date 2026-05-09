@@ -44,6 +44,7 @@ func baseCfg() config.Config {
 		SyncMaxConcurrent:    8,
 		SyncTotalTimeout:     30 * time.Second,
 		DriftInterval:        time.Hour,
+		WsMaxFrameBytes:      65536,
 	}
 }
 

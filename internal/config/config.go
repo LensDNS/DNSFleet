@@ -11,17 +11,19 @@ import (
 )
 
 const (
-	envDBPath             = "DNSFLEET_DB_PATH"
-	envHTTPAddr           = "DNSFLEET_HTTP_ADDR"
-	envAdminToken         = "DNSFLEET_ADMIN_TOKEN"
-	envAdminInsecure      = "DNSFLEET_ADMIN_INSECURE_DISABLE"
-	envSyncMaxConcurrent  = "DNSFLEET_SYNC_MAX_CONCURRENT"
-	envSyncTotalTimeout   = "DNSFLEET_SYNC_TOTAL_TIMEOUT"
-	envDriftInterval      = "DNSFLEET_DRIFT_INTERVAL"
-	defaultDBPath         = "./data/dnsfleet.db"
-	defaultHTTPAddr       = ":8080"
-	defaultSyncConcurrent = 8
-	defaultDuration       = 5 * time.Minute
+	envDBPath              = "DNSFLEET_DB_PATH"
+	envHTTPAddr            = "DNSFLEET_HTTP_ADDR"
+	envAdminToken          = "DNSFLEET_ADMIN_TOKEN"
+	envAdminInsecure       = "DNSFLEET_ADMIN_INSECURE_DISABLE"
+	envSyncMaxConcurrent   = "DNSFLEET_SYNC_MAX_CONCURRENT"
+	envSyncTotalTimeout    = "DNSFLEET_SYNC_TOTAL_TIMEOUT"
+	envDriftInterval       = "DNSFLEET_DRIFT_INTERVAL"
+	envWSMaxFrameBytes     = "DNSFLEET_WS_MAX_FRAME_BYTES"
+	defaultDBPath          = "./data/dnsfleet.db"
+	defaultHTTPAddr        = ":8080"
+	defaultSyncConcurrent  = 8
+	defaultDuration        = 5 * time.Minute
+	defaultWSMaxFrameBytes = 65536
 )
 
 // Config holds runtime settings resolved at startup.
@@ -37,6 +39,9 @@ type Config struct {
 	SyncMaxConcurrent int
 	SyncTotalTimeout  time.Duration
 	DriftInterval     time.Duration
+
+	// WsMaxFrameBytes caps a single outbound WebSocket text frame payload (Step 4 §4.G).
+	WsMaxFrameBytes int
 }
 
 // Load reads configuration from the environment, applies defaults, and ensures the database parent directory exists.
@@ -103,6 +108,15 @@ func Load() (Config, error) {
 		driftEvery = d
 	}
 
+	wsMax := defaultWSMaxFrameBytes
+	if s := strings.TrimSpace(os.Getenv(envWSMaxFrameBytes)); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 {
+			return Config{}, fmt.Errorf("%s: want positive integer, got %q", envWSMaxFrameBytes, s)
+		}
+		wsMax = v
+	}
+
 	return Config{
 		DBPath:               absDB,
 		HTTPAddr:             httpAddr,
@@ -111,6 +125,7 @@ func Load() (Config, error) {
 		SyncMaxConcurrent:    syncN,
 		SyncTotalTimeout:     syncTotal,
 		DriftInterval:        driftEvery,
+		WsMaxFrameBytes:      wsMax,
 	}, nil
 }
 

@@ -15,6 +15,7 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv(envSyncMaxConcurrent, "")
 	t.Setenv(envSyncTotalTimeout, "")
 	t.Setenv(envDriftInterval, "")
+	t.Setenv(envWSMaxFrameBytes, "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -38,6 +39,32 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.AdminInsecureDisable {
 		t.Fatal("AdminInsecureDisable should be false when unset")
+	}
+	if cfg.WsMaxFrameBytes != defaultWSMaxFrameBytes {
+		t.Fatalf("WsMaxFrameBytes: got %d want %d", cfg.WsMaxFrameBytes, defaultWSMaxFrameBytes)
+	}
+}
+
+func TestLoad_WSMaxFrameBytes(t *testing.T) {
+	t.Setenv(envDBPath, filepath.Join(t.TempDir(), "x.db"))
+	t.Setenv(envHTTPAddr, ":8080")
+	t.Setenv(envWSMaxFrameBytes, "32768")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WsMaxFrameBytes != 32768 {
+		t.Fatalf("WsMaxFrameBytes: got %d", cfg.WsMaxFrameBytes)
+	}
+}
+
+func TestLoad_WSMaxFrameBytes_invalid(t *testing.T) {
+	t.Setenv(envDBPath, filepath.Join(t.TempDir(), "x.db"))
+	t.Setenv(envHTTPAddr, ":8080")
+	t.Setenv(envWSMaxFrameBytes, "0")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
 

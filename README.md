@@ -31,12 +31,16 @@
 | `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | 对 AdGuard Home 的 HTTP 并发上限；**漂移循环**与 **`POST /api/v1/sync`** **共用**同一 semaphore（任意时刻飞行请求数 ≤ 该值） |
 | `DNSFLEET_SYNC_TOTAL_TIMEOUT` | `5m` | 单次 `POST /api/v1/sync` 的总超时（`time.ParseDuration` 语法；非法则启动失败） |
 | `DNSFLEET_DRIFT_INTERVAL` | `5m` | 漂移检测周期（语法同上）。进程启动后**先立即跑一轮**漂移，再按该间隔 ticker 重复 |
+| `DNSFLEET_QUERYLOG_MAX_CONCURRENT` | `8` | （Step 4）对 AdGH **`GET /control/querylog`** 的并发上限；**与** `DNSFLEET_SYNC_MAX_CONCURRENT` **独立**。峰值对 AdGH 的飞行请求约为两类上限之和（调度相关） |
+| `DNSFLEET_QUERYLOG_POLL_INTERVAL` | `2s` | （Step 4）每节点 querylog 轮询周期（Go duration；非法则启动失败） |
+| `DNSFLEET_QUERYLOG_PAGE_LIMIT` | `100` | （Step 4）单次 querylog 请求的 `limit`（非法则启动失败） |
+| `DNSFLEET_WS_MAX_FRAME_BYTES` | `65536` | （Step 4）发往浏览器的 WebSocket **文本帧**最大字节数（非法则启动失败） |
 
-业务 REST 路径前缀（v0.1 裁决）：**`/api/v1`**（健康检查仍为 **`GET /healthz`**，不经 Admin）。
+业务 REST 路径前缀（v0.1 裁决）：**`/api/v1`**（健康检查仍为 **`GET /healthz`**，不经 Admin）。实时日志 WebSocket：**`GET /api/v1/ws/logs`**（Upgrade；鉴权见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。
 
 ## Run
 
-`go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时初始化 SQLite 并 `AutoMigrate`，注册 **`GET /healthz`**（不经 Admin）与 **`/api/v1`** 业务路由（经 Admin，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。HTTP 在独立 goroutine 监听；主 goroutine 等待 **SIGINT/SIGTERM** 后先 `cancel` 漂移用的根 context，再 **`e.Shutdown`**。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
+`go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时初始化 SQLite 并 `AutoMigrate`，注册 **`GET /healthz`**（不经 Admin）、**`/api/v1/ws/logs`**（WebSocket，经 `AdminWS`，Step 4 §4.1）与 **`/api/v1`** REST（经 Admin，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。HTTP 在独立 goroutine 监听；主 goroutine 等待 **SIGINT/SIGTERM** 后先 `cancel` 漂移用的根 context，再 **`e.Shutdown`**。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
 
 ## 开发验收（Step 1.6）
 
@@ -53,7 +57,7 @@ go build -o bin/dnsfleet ./cmd/dnsfleet
 
 ## 状态
 
-Step 1、Step 2 已验收；**Step 3** 控制面 HTTP（`/api/v1`、Admin、节点 CRUD、全局配置、同步、漂移）已实现；协议细节以本机 `docs/详细开发计划.md` **「Step 3 产品/协议裁决」** 及 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 为准。
+Step 1、Step 2 已验收；**Step 3** 控制面 HTTP（`/api/v1`、Admin、节点 CRUD、全局配置、同步、漂移）已实现；**Step 4** 观测面（WebSocket + querylog 轮询）的 **产品/协议裁决** 已写入本机 `docs/详细开发计划.md` 与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)（代码实现可仍在进行中）。
 
 ## 许可证
 

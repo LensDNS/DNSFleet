@@ -6,9 +6,14 @@ import (
 	"github.com/lensdns/dnsfleet/internal/middleware"
 )
 
-// Mount registers /api/v1 routes behind Admin middleware. Caller registers /healthz separately.
+// Mount registers GET /api/v1/ws/logs (WebSocket, AdminWS) and /api/v1 REST routes (Admin). Caller registers /healthz separately.
 func Mount(e *echo.Echo, deps Deps) {
 	r := &Routes{Deps: deps}
+
+	ws := e.Group("/api/v1/ws")
+	ws.Use(middleware.AdminWS(deps.Config))
+	ws.GET("/logs", r.wsLogs)
+
 	g := e.Group("/api/v1")
 	g.Use(middleware.Admin(deps.Config))
 
