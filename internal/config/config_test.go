@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoad_Defaults(t *testing.T) {
@@ -16,6 +17,9 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv(envSyncTotalTimeout, "")
 	t.Setenv(envDriftInterval, "")
 	t.Setenv(envWSMaxFrameBytes, "")
+	t.Setenv(envQueryLogMaxConcurrent, "")
+	t.Setenv(envQueryLogPollInterval, "")
+	t.Setenv(envQueryLogPageLimit, "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -40,8 +44,17 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.AdminInsecureDisable {
 		t.Fatal("AdminInsecureDisable should be false when unset")
 	}
-	if cfg.WsMaxFrameBytes != defaultWSMaxFrameBytes {
-		t.Fatalf("WsMaxFrameBytes: got %d want %d", cfg.WsMaxFrameBytes, defaultWSMaxFrameBytes)
+	if cfg.WsMaxFrameBytes != DefaultWSMaxFrameBytes {
+		t.Fatalf("WsMaxFrameBytes: got %d want %d", cfg.WsMaxFrameBytes, DefaultWSMaxFrameBytes)
+	}
+	if cfg.QueryLogMaxConcurrent != defaultQueryLogMaxConcurrent {
+		t.Fatalf("QueryLogMaxConcurrent: got %d want %d", cfg.QueryLogMaxConcurrent, defaultQueryLogMaxConcurrent)
+	}
+	if cfg.QueryLogPollInterval != DefaultQueryLogPollInterval {
+		t.Fatalf("QueryLogPollInterval: got %v want %v", cfg.QueryLogPollInterval, DefaultQueryLogPollInterval)
+	}
+	if cfg.QueryLogPageLimit != DefaultQueryLogPageLimit {
+		t.Fatalf("QueryLogPageLimit: got %d want %d", cfg.QueryLogPageLimit, DefaultQueryLogPageLimit)
 	}
 }
 
@@ -113,6 +126,41 @@ func TestLoad_CreatesParentDir(t *testing.T) {
 	}
 	if !st.IsDir() {
 		t.Fatal("expected parent directory to exist")
+	}
+}
+
+func TestLoad_QueryLogEnv(t *testing.T) {
+	t.Setenv(envDBPath, filepath.Join(t.TempDir(), "x.db"))
+	t.Setenv(envHTTPAddr, ":8080")
+	t.Setenv(envQueryLogMaxConcurrent, "4")
+	t.Setenv(envQueryLogPollInterval, "3s")
+	t.Setenv(envQueryLogPageLimit, "50")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QueryLogMaxConcurrent != 4 || cfg.QueryLogPollInterval != 3*time.Second || cfg.QueryLogPageLimit != 50 {
+		t.Fatalf("querylog: %+v", cfg)
+	}
+}
+
+func TestLoad_QueryLog_invalid(t *testing.T) {
+	t.Setenv(envDBPath, filepath.Join(t.TempDir(), "x.db"))
+	t.Setenv(envHTTPAddr, ":8080")
+	t.Setenv(envQueryLogMaxConcurrent, "0")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for QUERYLOG_MAX_CONCURRENT=0")
+	}
+}
+
+func TestLoad_QueryLogPoll_invalid(t *testing.T) {
+	t.Setenv(envDBPath, filepath.Join(t.TempDir(), "x.db"))
+	t.Setenv(envHTTPAddr, ":8080")
+	t.Setenv(envQueryLogPollInterval, "0s")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for QUERYLOG_POLL_INTERVAL=0")
 	}
 }
 

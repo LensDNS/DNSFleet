@@ -3,14 +3,17 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
+
+	"github.com/lensdns/dnsfleet/internal/config"
 )
 
-// wsSystem is a Step 4 §4.E control message (type=system).
+// wsSystem is a Step 4 §4.E control message (type=system); used by tests and ConnectedStubHub.
 type wsSystem struct {
 	Type     string `json:"type"`
 	Event    string `json:"event"`
@@ -20,6 +23,12 @@ type wsSystem struct {
 }
 
 func writeWebSocketJSONObject(conn *websocket.Conn, maxBytes int, v any) error {
+	if conn == nil {
+		return fmt.Errorf("writeWebSocketJSONObject: nil conn")
+	}
+	if maxBytes < 1 {
+		maxBytes = config.DefaultWSMaxFrameBytes
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -30,17 +39,47 @@ func writeWebSocketJSONObject(conn *websocket.Conn, maxBytes int, v any) error {
 			Event:   "frame_too_large",
 			Message: "message exceeds DNSFLEET_WS_MAX_FRAME_BYTES",
 		})
-		if ferr != nil || len(fallback) > maxBytes {
-			return nil
+		if ferr != nil {
+			return fmt.Errorf("writeWebSocketJSONObject: marshal fallback: %w", ferr)
+		}
+		if len(fallback) > maxBytes {
+			return fmt.Errorf("writeWebSocketJSONObject: fallback still exceeds maxBytes")
 		}
 		return conn.WriteMessage(websocket.TextMessage, fallback)
 	}
 	return conn.WriteMessage(websocket.TextMessage, b)
 }
 
-// wsLogs implements GET /api/v1/ws/logs (Step 4 §4.1): Upgrade, optional system connected, read loop until disconnect.
-// Upstream querylog polling and type=log frames are Step 4 §4.2.
+// ConnectedStubHub implements LogHub for tests: sends system+connected on Register (production uses *querylog.Hub).
+type ConnectedStubHub struct {
+	MaxBytes int
+}
+
+// Register implements LogHub.
+func (s ConnectedStubHub) Register(conn *websocket.Conn) bool {
+	if conn == nil {
+		return false
+	}
+	max := s.MaxBytes
+	if max < 1 {
+		max = config.DefaultWSMaxFrameBytes
+	}
+	err := writeWebSocketJSONObject(conn, max, wsSystem{
+		Type:    "system",
+		Event:   "connected",
+		Message: "query log stream ready (stub hub)",
+	})
+	return err == nil
+}
+
+// Unregister implements LogHub.
+func (ConnectedStubHub) Unregister(*websocket.Conn) {}
+
+// wsLogs implements GET /api/v1/ws/logs (Step 4 §4.1–§4.2): Upgrade, Hub Register, read loop, Ping.
 func (r *Routes) wsLogs(c echo.Context) error {
+	if r.Deps.Hub == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "live log hub not configured")
+	}
 	// CheckOrigin true: dev-friendly; restrict origins in production (reverse proxy or env-driven) per Step 4 §4.G / README.
 	up := websocket.Upgrader{
 		CheckOrigin: func(*http.Request) bool { return true },
@@ -49,17 +88,14 @@ func (r *Routes) wsLogs(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// Defer LIFO: Unregister runs before Close so the Hub stops writing before the socket closes (§4.2.1).
 	defer conn.Close()
-	// v0.1 rejects application payloads from browser; cap inbound size to limit abuse (§4.1 read loop only).
+	defer func() { r.Deps.Hub.Unregister(conn) }()
+
 	const wsMaxClientReadBytes = 4096
 	conn.SetReadLimit(wsMaxClientReadBytes)
 
-	connected := wsSystem{
-		Type:    "system",
-		Event:   "connected",
-		Message: "query log stream ready (upstream polling in Step 4.2)",
-	}
-	if err := writeWebSocketJSONObject(conn, r.Deps.Config.WsMaxFrameBytes, connected); err != nil {
+	if !r.Deps.Hub.Register(conn) {
 		return nil
 	}
 
@@ -79,7 +115,12 @@ func (r *Routes) wsLogs(c echo.Context) error {
 			case <-pingCtx.Done():
 				return
 			case <-tick.C:
-				_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+					// §4.2.1 / §4.G: unregister on WriteControl failure; close so ReadMessage unblocks.
+					r.Deps.Hub.Unregister(conn)
+					_ = conn.Close()
+					return
+				}
 			}
 		}
 	}()

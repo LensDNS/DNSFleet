@@ -15,6 +15,7 @@ import (
 	"github.com/lensdns/dnsfleet/internal/config"
 	fleetdb "github.com/lensdns/dnsfleet/internal/db"
 	"github.com/lensdns/dnsfleet/internal/httpapi"
+	"github.com/lensdns/dnsfleet/internal/querylog"
 )
 
 func main() {
@@ -46,7 +47,8 @@ func main() {
 	defer cancel()
 
 	sem := make(chan struct{}, cfg.SyncMaxConcurrent)
-	deps := httpapi.Deps{Config: cfg, DB: gormDB, AdGHSem: sem}
+	hub := querylog.NewHub(ctxRoot, gormDB, cfg)
+	deps := httpapi.Deps{Config: cfg, DB: gormDB, AdGHSem: sem, Hub: hub}
 
 	e := echo.New()
 	e.HideBanner = true

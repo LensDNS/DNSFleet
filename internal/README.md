@@ -17,4 +17,4 @@
 
 - `internal/adguard` — AdGuard Home HTTP 客户端（Step 2.1 传输与认证骨架；Step 2.2 业务能力）；说明见 [`internal/adguard/README.md`](adguard/README.md)，**契约**见 [`api/ADGUARD_HOME_CONTROL_API.md`](../api/ADGUARD_HOME_CONTROL_API.md)
 - `internal/http` 或 `internal/server` — Echo/Fiber 路由与中间件（Step 3）
-- `internal/querylog` — 查询日志字段映射与 Step 4 文档索引（[`internal/querylog/README.md`](querylog/README.md)）；聚合轮询实现见 Step 4 §4.2
+- `internal/querylog` — Step 4 **Hub**（`hub.go` 等）+ 字段映射摘录（[`internal/querylog/README.md`](querylog/README.md)）

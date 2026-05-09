@@ -18,4 +18,4 @@
 
 **约定**：`entry` 内尽量 **保留 AdGH 原始键名**（见 `docs/详细开发计划.md` Step 4 §4.E），便于与面板/OpenAPI 对齐；DNSFleet 不在此阶段发明平行字段名。
 
-**首次轮询 `older_than` / `offset` / `limit` 组合**：写在 `internal/adguard`（或本包客户端）**代码注释**中并对照 OpenAPI，勿仅靠本表。
+**首次轮询 `older_than` / `offset` / `limit` 组合**：首屏 **不传** `older_than` 查询键（见 `internal/adguard` `GetQueryLog` 注释与 OpenAPI）；游标推进见 `internal/querylog` Hub。

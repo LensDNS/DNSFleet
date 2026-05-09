@@ -38,9 +38,11 @@
 
 业务 REST 路径前缀（v0.1 裁决）：**`/api/v1`**（健康检查仍为 **`GET /healthz`**，不经 Admin）。实时日志 WebSocket：**`GET /api/v1/ws/logs`**（Upgrade；鉴权见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。
 
+**实时查询日志（Live Logs）**：控制面按在线节点轮询 AdGH **`GET /control/querylog`**，经进程内 Hub **fan-out** 到各 WebSocket 客户端；**不是** AdGH 原生 push。观测延迟 **大致**为 **`DNSFLEET_QUERYLOG_POLL_INTERVAL` + 调度排队 + RTT**；节点数与轮询间隔越大，控制面与 AdGH 负载越高（与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 并发说明一致）。每个客户端有 **有界出站队列**；队列满时 **丢弃该客户端队列中最旧的一条待发消息**，并对该客户端发送 **`system` + `backpressure_drop`**（§4.G）。
+
 ## Run
 
-`go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时初始化 SQLite 并 `AutoMigrate`，注册 **`GET /healthz`**（不经 Admin）、**`/api/v1/ws/logs`**（WebSocket，经 `AdminWS`，Step 4 §4.1）与 **`/api/v1`** REST（经 Admin，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。HTTP 在独立 goroutine 监听；主 goroutine 等待 **SIGINT/SIGTERM** 后先 `cancel` 漂移用的根 context，再 **`e.Shutdown`**。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
+`go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时初始化 SQLite 并 `AutoMigrate`，构造 **`internal/querylog` Hub**（与漂移同源根 `context`），注册 **`GET /healthz`**（不经 Admin）、**`/api/v1/ws/logs`**（WebSocket，经 `AdminWS`）与 **`/api/v1`** REST（经 Admin，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。HTTP 在独立 goroutine 监听；主 goroutine 等待 **SIGINT/SIGTERM** 后先 **`cancel`** 根 context（停止漂移与 **querylog Hub 轮询**），再 **`e.Shutdown`**。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
 
 ## 开发验收（Step 1.6）
 
@@ -57,7 +59,7 @@ go build -o bin/dnsfleet ./cmd/dnsfleet
 
 ## 状态
 
-Step 1、Step 2 已验收；**Step 3** 控制面 HTTP（`/api/v1`、Admin、节点 CRUD、全局配置、同步、漂移）已实现；**Step 4** 观测面（WebSocket + querylog 轮询）的 **产品/协议裁决** 已写入本机 `docs/详细开发计划.md` 与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)（代码实现可仍在进行中）。
+Step 1、Step 2 已验收；**Step 3** 控制面 HTTP（`/api/v1`、Admin、节点 CRUD、全局配置、同步、漂移）已实现；**Step 4** 观测面（WebSocket、`GET /control/querylog` 轮询聚合、Hub fan-out）**§4.1–§4.2** 行为以本仓库代码与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 为准；裁决全文见维护者本机 `docs/详细开发计划.md`。
 
 ## 许可证
 

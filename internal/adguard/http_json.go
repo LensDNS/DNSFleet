@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // doJSON executes a request and decodes a 2xx JSON body into out when out is non-nil.
@@ -26,6 +27,47 @@ func (c *Client) doJSON(ctx context.Context, method string, reqBody io.Reader, c
 		return httpStatusToErr(resp.StatusCode)
 	}
 
+	if out != nil {
+		dec := json.NewDecoder(resp.Body)
+		if err := dec.Decode(out); err != nil {
+			return &ErrJSONDecode{Err: err}
+		}
+	}
+	return nil
+}
+
+// doJSONGetQuery runs GET /control/<segments...> with optional query and decodes JSON into out.
+func (c *Client) doJSONGetQuery(ctx context.Context, out any, query url.Values, controlSegments ...string) error {
+	reqURL, err := joinControlURL(c.baseURL, controlSegments...)
+	if err != nil {
+		return err
+	}
+	u, err := url.Parse(reqURL)
+	if err != nil {
+		return fmt.Errorf("adguard: parse URL: %w", err)
+	}
+	if query != nil {
+		u.RawQuery = query.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("adguard: build request: %w", err)
+	}
+	c.setAuth(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("adguard: %s %s: %w", http.MethodGet, u.String(), err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return httpStatusToErr(resp.StatusCode)
+	}
 	if out != nil {
 		dec := json.NewDecoder(resp.Body)
 		if err := dec.Decode(out); err != nil {

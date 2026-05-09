@@ -32,19 +32,27 @@ func testDeps(t *testing.T, cfg config.Config) (*echo.Echo, *gorm.DB, func()) {
 		_ = sqlDB.Close()
 	}
 	e := echo.New()
-	deps := Deps{Config: cfg, DB: db, AdGHSem: make(chan struct{}, cfg.SyncMaxConcurrent)}
+	deps := Deps{
+		Config:  cfg,
+		DB:      db,
+		AdGHSem: make(chan struct{}, cfg.SyncMaxConcurrent),
+		Hub:     ConnectedStubHub{MaxBytes: cfg.WsMaxFrameBytes},
+	}
 	Mount(e, deps)
 	return e, db, cleanup
 }
 
 func baseCfg() config.Config {
 	return config.Config{
-		AdminToken:           "admintok",
-		AdminInsecureDisable: false,
-		SyncMaxConcurrent:    8,
-		SyncTotalTimeout:     30 * time.Second,
-		DriftInterval:        time.Hour,
-		WsMaxFrameBytes:      65536,
+		AdminToken:            "admintok",
+		AdminInsecureDisable:  false,
+		SyncMaxConcurrent:     8,
+		SyncTotalTimeout:      30 * time.Second,
+		DriftInterval:         time.Hour,
+		WsMaxFrameBytes:       config.DefaultWSMaxFrameBytes,
+		QueryLogMaxConcurrent: 8,
+		QueryLogPollInterval:  config.DefaultQueryLogPollInterval,
+		QueryLogPageLimit:     config.DefaultQueryLogPageLimit,
 	}
 }
 

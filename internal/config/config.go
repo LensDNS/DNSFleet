@@ -11,19 +11,27 @@ import (
 )
 
 const (
-	envDBPath              = "DNSFLEET_DB_PATH"
-	envHTTPAddr            = "DNSFLEET_HTTP_ADDR"
-	envAdminToken          = "DNSFLEET_ADMIN_TOKEN"
-	envAdminInsecure       = "DNSFLEET_ADMIN_INSECURE_DISABLE"
-	envSyncMaxConcurrent   = "DNSFLEET_SYNC_MAX_CONCURRENT"
-	envSyncTotalTimeout    = "DNSFLEET_SYNC_TOTAL_TIMEOUT"
-	envDriftInterval       = "DNSFLEET_DRIFT_INTERVAL"
-	envWSMaxFrameBytes     = "DNSFLEET_WS_MAX_FRAME_BYTES"
-	defaultDBPath          = "./data/dnsfleet.db"
-	defaultHTTPAddr        = ":8080"
-	defaultSyncConcurrent  = 8
-	defaultDuration        = 5 * time.Minute
-	defaultWSMaxFrameBytes = 65536
+	envDBPath                = "DNSFLEET_DB_PATH"
+	envHTTPAddr              = "DNSFLEET_HTTP_ADDR"
+	envAdminToken            = "DNSFLEET_ADMIN_TOKEN"
+	envAdminInsecure         = "DNSFLEET_ADMIN_INSECURE_DISABLE"
+	envSyncMaxConcurrent     = "DNSFLEET_SYNC_MAX_CONCURRENT"
+	envSyncTotalTimeout      = "DNSFLEET_SYNC_TOTAL_TIMEOUT"
+	envDriftInterval         = "DNSFLEET_DRIFT_INTERVAL"
+	envWSMaxFrameBytes       = "DNSFLEET_WS_MAX_FRAME_BYTES"
+	envQueryLogMaxConcurrent = "DNSFLEET_QUERYLOG_MAX_CONCURRENT"
+	envQueryLogPollInterval  = "DNSFLEET_QUERYLOG_POLL_INTERVAL"
+	envQueryLogPageLimit     = "DNSFLEET_QUERYLOG_PAGE_LIMIT"
+	// DefaultWSMaxFrameBytes / DefaultQueryLogPageLimit / DefaultQueryLogPollInterval match Load()
+	// when the corresponding env vars are unset; querylog Hub uses them as safe floors if Config is bypassed.
+	DefaultWSMaxFrameBytes       = 65536
+	DefaultQueryLogPageLimit     = 100
+	DefaultQueryLogPollInterval  = 2 * time.Second
+	defaultDBPath                = "./data/dnsfleet.db"
+	defaultHTTPAddr              = ":8080"
+	defaultSyncConcurrent        = 8
+	defaultDuration              = 5 * time.Minute
+	defaultQueryLogMaxConcurrent = 8
 )
 
 // Config holds runtime settings resolved at startup.
@@ -42,6 +50,13 @@ type Config struct {
 
 	// WsMaxFrameBytes caps a single outbound WebSocket text frame payload (Step 4 §4.G).
 	WsMaxFrameBytes int
+
+	// QueryLogMaxConcurrent limits in-flight AdGH GET /control/querylog calls (Step 4 §4.B); independent of SyncMaxConcurrent.
+	QueryLogMaxConcurrent int
+	// QueryLogPollInterval is the coordinator tick for refreshing online nodes and polling querylog (Step 4 §4.C).
+	QueryLogPollInterval time.Duration
+	// QueryLogPageLimit is the default limit query param for GET /control/querylog (Step 4 §4.C).
+	QueryLogPageLimit int
 }
 
 // Load reads configuration from the environment, applies defaults, and ensures the database parent directory exists.
@@ -108,7 +123,7 @@ func Load() (Config, error) {
 		driftEvery = d
 	}
 
-	wsMax := defaultWSMaxFrameBytes
+	wsMax := DefaultWSMaxFrameBytes
 	if s := strings.TrimSpace(os.Getenv(envWSMaxFrameBytes)); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 1 {
@@ -117,15 +132,48 @@ func Load() (Config, error) {
 		wsMax = v
 	}
 
+	qlConc := defaultQueryLogMaxConcurrent
+	if s := strings.TrimSpace(os.Getenv(envQueryLogMaxConcurrent)); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 {
+			return Config{}, fmt.Errorf("%s: want positive integer, got %q", envQueryLogMaxConcurrent, s)
+		}
+		qlConc = v
+	}
+
+	qlPoll := DefaultQueryLogPollInterval
+	if s := strings.TrimSpace(os.Getenv(envQueryLogPollInterval)); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", envQueryLogPollInterval, err)
+		}
+		if d <= 0 {
+			return Config{}, fmt.Errorf("%s: must be positive", envQueryLogPollInterval)
+		}
+		qlPoll = d
+	}
+
+	qlPage := DefaultQueryLogPageLimit
+	if s := strings.TrimSpace(os.Getenv(envQueryLogPageLimit)); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 1 {
+			return Config{}, fmt.Errorf("%s: want positive integer, got %q", envQueryLogPageLimit, s)
+		}
+		qlPage = v
+	}
+
 	return Config{
-		DBPath:               absDB,
-		HTTPAddr:             httpAddr,
-		AdminToken:           strings.TrimSpace(adminTok),
-		AdminInsecureDisable: insecure,
-		SyncMaxConcurrent:    syncN,
-		SyncTotalTimeout:     syncTotal,
-		DriftInterval:        driftEvery,
-		WsMaxFrameBytes:      wsMax,
+		DBPath:                absDB,
+		HTTPAddr:              httpAddr,
+		AdminToken:            strings.TrimSpace(adminTok),
+		AdminInsecureDisable:  insecure,
+		SyncMaxConcurrent:     syncN,
+		SyncTotalTimeout:      syncTotal,
+		DriftInterval:         driftEvery,
+		WsMaxFrameBytes:       wsMax,
+		QueryLogMaxConcurrent: qlConc,
+		QueryLogPollInterval:  qlPoll,
+		QueryLogPageLimit:     qlPage,
 	}, nil
 }
 

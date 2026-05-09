@@ -1,3 +1,2 @@
-// Package querylog documents AdGuard Home query log field mapping for Step 4 WebSocket entry payloads.
-// Runtime aggregation lives under internal/httpapi (§4.1 handshake) and future pollers (§4.2).
+// Package querylog holds the process-wide query log Hub (Step 4 §4.2) and field-mapping docs (README.md).
 package querylog

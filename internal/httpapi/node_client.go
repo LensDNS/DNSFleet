@@ -6,9 +6,5 @@ import (
 )
 
 func adguardClientFor(n *models.Node) (*adguard.Client, error) {
-	opts := []adguard.ClientOption{}
-	if n.AuthKind == models.AuthKindBearer {
-		opts = append(opts, adguard.WithAllowBearerForProxy())
-	}
-	return adguard.NewClient(n.BaseURL, n.Username, n.Credential, n.AuthKind, opts...)
+	return adguard.NewClientFromNode(n)
 }
