@@ -15,7 +15,7 @@
 | `internal/` | 应用私有代码 |
 | `api/` | 预留 API 契约 |
 | `web/` | 前端（Next.js）；开发与联调见 [`web/README.md`](web/README.md) |
-| `deploy/` | 预留容器与编排 |
+| `deploy/` | Docker 与 Compose（见 [`deploy/README.md`](deploy/README.md)） |
 | `scripts/` | 可选脚本 |
 
 ## Configuration
@@ -44,23 +44,39 @@
 
 `go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时初始化 SQLite 并 `AutoMigrate`，构造 **`internal/querylog` Hub**（与漂移同源根 `context`），注册 **`GET /healthz`**（不经 Admin）、**`/api/v1/ws/logs`**（WebSocket，经 `AdminWS`）与 **`/api/v1`** REST（经 Admin，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。HTTP 在独立 goroutine 监听；主 goroutine 等待 **SIGINT/SIGTERM** 后先 **`cancel`** 根 context（停止漂移与 **querylog Hub 轮询**），再 **`e.Shutdown`**。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
 
+生产形态（默认）：Web UI 为 Next **静态导出**，由 **`go:embed`** 打进二进制并在 **同一端口** 与 API 一并提供（无独立 Next 进程）。本地修改前端后须先在 `web/` 执行 **`npm run build`**，再同步到 [`internal/webui/dist`](internal/webui/dist)（见 **`Makefile` `ensure-webui-dist`** 或 [`scripts/ensure-webui-dist.ps1`](scripts/ensure-webui-dist.ps1)），否则嵌入资源仍是旧版。
+
+### Docker / Compose（一键运行）
+
+在仓库根目录执行（构建上下文为仓库根，Compose 文件在 `deploy/`）：
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+默认映射 **`8080:8080`**，与 **`DNSFLEET_HTTP_ADDR=:8080`** 一致。SQLite 使用命名卷挂载到容器内 **`/data`**，**`DNSFLEET_DB_PATH`** 指向 **`/data/dnsfleet.db`**（见 [`deploy/docker-compose.yml`](deploy/docker-compose.yml)）。镜像以 **distroless nonroot（UID 65532）** 运行，**干净环境下命名卷常为 root 属主**，可能导致数据库无法创建；见 [`deploy/README.md`](deploy/README.md)（**卷 `chown`** 或与 **`deploy/docker-compose.demo.yml`** 合并以 **仅演示** 用 root 运行）。构建参数（**`NEXT_PUBLIC_*`** 须在 **镜像构建阶段** 注入）亦在该文档中说明。
+
+若在 **Nginx / Caddy** 等后面终止 TLS 或反代，须正确转发 **WebSocket**（**`Upgrade`**、**`Connection`**），否则 Live Logs（**`/api/v1/ws/logs`**）无法连接；路径与鉴权见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)。
+
 ## 开发验收（Step 1.6）
 
-在仓库根目录执行（与维护者本机 `docs/详细开发计划.md` §1.6 一致；**不**自动加载 `.env` 时须自行导出变量）：
+在仓库根目录执行（与维护者本机 `docs/详细开发计划.md` 第 1.6 节一致；**不**自动加载 `.env` 时须自行导出变量）。
+
+嵌入 UI 后 **`go test`** 需要 **`internal/webui/dist`** 非空：请先 **`make ensure-webui-dist`**（Unix / Git Bash），或 **`powershell -File scripts/ensure-webui-dist.ps1`**（Windows），再运行测试；或直接 **`make test`**（内部会先 `ensure-webui-dist`）。
 
 ```bash
 go fmt ./...
-go vet ./...
-go test ./...
+go vet ./cmd/... ./internal/...
+go test ./cmd/... ./internal/...
 go build -o bin/dnsfleet ./cmd/dnsfleet
 ```
 
-在 **Windows** 上，构建产物多为 `bin\dnsfleet.exe`；`bin/` 已列入 `.gitignore`。
+在 **Windows** 上，构建产物多为 `bin\dnsfleet.exe`；`bin/` 已列入 `.gitignore`。请勿在仓库根对全局执行 **`go test ./...`**：若存在 **`web/node_modules`**，可能扫到无关 Go 包导致失败；请限定 **`./cmd/... ./internal/...`** 或使用 **`make test`**。
 
 ## 状态
 
-Step 1、Step 2 已验收；**Step 3** 控制面 HTTP（`/api/v1`、Admin、节点 CRUD、全局配置、同步、漂移）已实现；**Step 4** 观测面（WebSocket、`GET /control/querylog` 轮询聚合、Hub fan-out）**§4.1–§4.2** 行为以本仓库代码与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 为准；裁决全文见维护者本机 `docs/详细开发计划.md`。
+Step 1、Step 2 已验收；**Step 3** 控制面 HTTP（`/api/v1`、Admin、节点 CRUD、全局配置、同步、漂移）已实现；**Step 4** 观测面（WebSocket、`GET /control/querylog` 轮询聚合、Hub fan-out）行为以本仓库代码与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 为准；**Step 7** 静态嵌入 UI + **`deploy/`** Docker 多阶段构建与 Compose 已落地。裁决全文见维护者本机 `docs/详细开发计划.md`。
 
 ## 许可证
 
-待定；确定后于本仓库根目录添加 `LICENSE`。
+[MIT](LICENSE)

@@ -10,6 +10,7 @@ function normalizeBackendOrigin(): string {
 const backend = normalizeBackendOrigin();
 
 const nextConfig: NextConfig = {
+  output: "export",
   async rewrites() {
     return [
       { source: "/healthz", destination: `${backend}/healthz` },

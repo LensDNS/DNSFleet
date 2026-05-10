@@ -16,6 +16,7 @@ import (
 	fleetdb "github.com/lensdns/dnsfleet/internal/db"
 	"github.com/lensdns/dnsfleet/internal/httpapi"
 	"github.com/lensdns/dnsfleet/internal/querylog"
+	"github.com/lensdns/dnsfleet/internal/webui"
 )
 
 func main() {
@@ -56,6 +57,7 @@ func main() {
 		return c.String(http.StatusOK, "ok")
 	})
 	httpapi.Mount(e, deps)
+	webui.Mount(e)
 
 	go httpapi.StartDriftLoop(ctxRoot, deps)
 

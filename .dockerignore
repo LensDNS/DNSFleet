@@ -1,0 +1,16 @@
+# Build context = repo root
+.git
+.github
+**/.next
+**/node_modules
+web/out
+internal/webui/dist
+docs
+AGENTS.md
+.cursor
+bin
+*.db
+data
+AdGuardHome
+**/*.log
+**/.git

@@ -27,6 +27,8 @@ Thumbs.db
 /bin/
 /dist/
 /build/
+# Next export copy for go:embed (use make ensure-webui-dist or Docker build)
+internal/webui/dist/
 coverage.out
 coverage.html
 *.exe

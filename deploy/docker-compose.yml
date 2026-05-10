@@ -1,0 +1,23 @@
+# Build context = repository root (parent of deploy/).
+#
+# SQLite + distroless nonroot: a fresh named volume on /data is often root-owned; UID 65532
+# may fail to create DNSFLEET_DB_PATH. See deploy/README.md (volume permissions + demo merge file).
+services:
+  dnsfleet:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        # Build-time only; omit or set to "1" for insecure demo images (must match DNSFLEET_ADMIN_INSECURE_DISABLE at runtime).
+        NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH: ""
+    ports:
+      - "8080:8080"
+    environment:
+      DNSFLEET_HTTP_ADDR: ":8080"
+      DNSFLEET_ADMIN_TOKEN: "change-me-in-production"
+      DNSFLEET_DB_PATH: "/data/dnsfleet.db"
+    volumes:
+      - dnsfleet-data:/data
+
+volumes:
+  dnsfleet-data:

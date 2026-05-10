@@ -1,0 +1,8 @@
+# Merge with docker-compose.yml for local smoke only: run the process as root so a
+# fresh Docker named volume on /data is writable without chown. Do not use in production.
+# Usage: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.demo.yml up --build
+# See deploy/README.md (SQLite volume and nonroot).
+
+services:
+  dnsfleet:
+    user: "0:0"

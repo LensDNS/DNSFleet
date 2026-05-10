@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
+import { clearSessionStoredToken, isSkipAdminAuth } from "@/lib/auth-token";
 
 const nav = [
   { href: "/fleet", label: "Fleet" },
@@ -18,6 +20,12 @@ function envLabel(): string {
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  function logout() {
+    clearSessionStoredToken();
+    router.push("/login");
+  }
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -49,8 +57,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Admin</span>
-            <span className="text-xs text-muted-foreground">(placeholder)</span>
+            {isSkipAdminAuth() ? (
+              <span className="text-xs text-amber-600 dark:text-amber-400" title="构建期环境变量">
+                SKIP Admin
+              </span>
+            ) : null}
+            <Button type="button" variant="outline" size="sm" onClick={logout}>
+              登出
+            </Button>
             <ThemeToggle />
           </div>
         </header>

@@ -1,6 +1,9 @@
-# DNSFleet — Web (Step 5)
+# DNSFleet — Web
 
-Next.js (App Router) + Tailwind v4 + shadcn/ui shell. Control plane API lives on Echo; this app uses **same-origin rewrites** so the browser never cross-origin calls `:8080` directly.
+Next.js (App Router) + Tailwind v4 + shadcn/ui shell. Control plane API is implemented by Echo.
+
+- **开发**：`next dev` + **`next.config.ts` rewrites**，浏览器只访问 Next 源站；详见下文 **Cross-origin strategy**。
+- **生产（默认 MVP）**：静态导出 **`output: 'export'`**，由 Go **`go:embed`** 与 Echo **同端口**提供；**无** Next 进程，**不需要** `DNSFLEET_BACKEND_URL`。REST/WebSocket 使用相对路径 **`/api/v1`**（与 [`lib/api.ts`](lib/api.ts) 默认一致）。
 
 ## Prerequisites
 
@@ -20,16 +23,16 @@ npm run dev
 
 Open `http://localhost:3000` → redirects to `/fleet`.
 
-## Cross-origin strategy (§5.0)
+## Cross-origin strategy（仅开发）
 
-Echo does **not** ship CORS. Default strategy: **`next.config.ts` `rewrites`** so the browser only talks to the Next origin; Next forwards to the control plane.
+Echo does **not** ship CORS. **`next dev`** 下默认：**`next.config.ts` `rewrites`**，浏览器只访问 Next 源站，由 Next 转发到控制面。**`output: export`** 的生产构建不会执行 rewrites；嵌入二进制后面板与 API 已同源，无需本节。
 
 | Browser path | Proxied to (example `DNSFLEET_BACKEND_URL=http://127.0.0.1:8080`) |
 |--------------|---------------------------------------------------------------------|
 | `/healthz` | `http://127.0.0.1:8080/healthz` |
 | `/api/v1/*` (REST + WS path) | `http://127.0.0.1:8080/api/v1/*` |
 
-**Important:** `destination` is resolved by the **Next server process**, not the browser. In Docker Compose, set `DNSFLEET_BACKEND_URL` to a hostname **reachable from the Next container** (not necessarily `localhost` on the host).
+**Important:** `destination` is resolved by the **Next server process**, not the browser. **备选 B（双容器）**：若在 Compose 中单独跑 **`next start`** / standalone，仍可按此表配置 **`DNSFLEET_BACKEND_URL`**（须对 Next 容器可达，不一定是宿主 **`localhost`**）。默认 **单进程嵌入** 镜像不需要第二容器，也不要求 **`DNSFLEET_BACKEND_URL`**。
 
 ### Environment variables (do not confuse with Go)
 
@@ -37,8 +40,10 @@ Echo does **not** ship CORS. Default strategy: **`next.config.ts` `rewrites`** s
 |----------|-------|---------|
 | `DNSFLEET_HTTP_ADDR` | Repo root `.env` for **Go** | Echo listen address, e.g. `:8080` |
 | `DNSFLEET_BACKEND_URL` | `web/.env.local` (loaded by Next for `next.config`) | Full origin for rewrites, e.g. `http://127.0.0.1:8080` |
+| `NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH` | `web/.env.local`（dev）或 **Docker `build.args` / `ARG`→`ENV`（生产镜像）** | 仅当值为 **`1`** 时：前端 REST 不带 Admin 头、WS 不带 `token=`；与 **`DNSFLEET_ADMIN_INSECURE_DISABLE=1`** 成对使用。**静态导出会把该值打进 bundle**；改镜像内行为须 **重建镜像** 并在构建阶段注入，**不能**仅靠运行时改容器 `environment`。 |
+| `NEXT_PUBLIC_DNSFLEET_ADMIN_TOKEN` | `web/.env.local` | 可选兜底 token（构建期注入）；登录写入的 sessionStorage 优先。 |
 
-If you change the Echo port, update **both** consistently.
+If you change the Echo port, update **both** `DNSFLEET_HTTP_ADDR` / `DNSFLEET_BACKEND_URL` consistently.
 
 ## REST client (`lib/api.ts`)
 
@@ -46,9 +51,20 @@ If you change the Echo port, update **both** consistently.
 - **Never** set `NEXT_PUBLIC_API_BASE` to the backend origin while using rewrites — the browser would hit Echo directly and hit CORS.
 - **`apiFetch(path, …)`:** `path` is appended after that base. Use **`/nodes`** (or `nodes`), not **`/api/v1/nodes`**, or you get a doubled prefix (`/api/v1/api/v1/…`).
 
-## Admin token (dev)
+## Admin token（Step 6 约定）
 
-`NEXT_PUBLIC_DNSFLEET_ADMIN_TOKEN` must match **`DNSFLEET_ADMIN_TOKEN`** on the control plane. It is embedded in the client bundle — **dev / controlled networks only**; production should use reverse-proxy injection or Step 6 login patterns (see `api/DNSFLEET_HTTP_API.md`).
+登录或设置面板落地后，token 由 **`sessionStorage`**（或 memory）写入，`lib/api.ts` 与 WebSocket URL（Query `token=`）须 **读同一来源**。
+
+**优先级（钉死；后者仅兜底）：**
+
+1. **运行时存储**：若存在已保存的 token（例如登录页写入的 `sessionStorage`），**始终优先**。
+2. **`NEXT_PUBLIC_DNSFLEET_ADMIN_TOKEN`**：须与控制面 **`DNSFLEET_ADMIN_TOKEN`** 一致；仅 **本地 / 受控网络 dev 快捷**，进入客户端 bundle — **不得**作为生产唯一鉴权（见 `api/DNSFLEET_HTTP_API.md`）。
+
+### 免 Admin 对照 smoke（仅开发）
+
+控制面若设置 **`DNSFLEET_ADMIN_INSECURE_DISABLE=1`**，Echo **跳过** Admin 校验。前端亦须 **不发送** Admin 头、**WebSocket 不拼** `token=` query，否则会与后端语义不一致。
+
+推荐与后端成对：在 `web/.env.local` 设置 **`NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH=1`**（**须恰好为字符串 `1`**）。此时 `apiFetch` 会强制剥离 `Authorization` / `X-Admin-Token`（即使 session 或 `NEXT_PUBLIC_DNSFLEET_ADMIN_TOKEN` 仍有值）；`buildLogsWebSocketUrl()` 亦不会附加 `token=`。修改任意 **`NEXT_PUBLIC_*`** 后须 **重启 `next dev` 或重新 `next build`**，客户端才能读到新值。
 
 ## WebSocket (Step 6 handoff)
 
@@ -59,15 +75,21 @@ Under rewrites, open the WebSocket against the **same host as the page**, path *
 
 **Do not** hard-code `ws://127.0.0.1:8080` — that bypasses rewrites and breaks the model.
 
-Auth: prefer `Authorization: Bearer` on the upgrade if possible; query `token=` is allowed by the API doc but leaks in logs — see `api/DNSFLEET_HTTP_API.md`.
+Auth: 原生浏览器 WS 往往只能用 Query **`token=`**（与 API 文档一致；Referrer / 代理 access log 风险见 `api/DNSFLEET_HTTP_API.md`）。**`NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH=1`** 时 **不得**附加 `token=`，与后端 insecure 成对。
 
 ### WS smoke (before Step 6 UI)
 
 After `npm run dev` + control plane up, verify **101** on the proxied URL. If **dev** (e.g. Turbopack) behaves oddly but **`npm run build && npm run start`** works, note that for troubleshooting (not a CI gate).
 
-## Step 7 note
+## Production build（嵌入二进制 / Docker）
 
-`output: 'export'` static hosting **does not** run Next rewrites. You would need a reverse proxy or a different embed strategy (`standalone` + Go, etc.) — out of scope for Step 5.
+```bash
+cd web
+npm ci
+npm run build   # 产出 web/out；Dockerfile 会拷贝到 internal/webui/dist 再打 Go 二进制
+```
+
+Compose 见 [`deploy/docker-compose.yml`](../deploy/docker-compose.yml)（**`build.args`** 与 Dockerfile **`ARG`** 对齐）。**命名卷 + nonroot** 下 SQLite 权限与 **`docker-compose.demo.yml`** 演示合并文件见 [`deploy/README.md`](../deploy/README.md)。
 
 ## Scripts
 
@@ -82,11 +104,12 @@ npm run lint     # eslint
 
 `web/.gitignore` ignores `.env*` but **un-ignores** `!.env.example` so `web/.env.example` can be committed. From repo root: `git add -n web/.env.example` should show `add 'web/.env.example'`. (Do not use `git check-ignore -v` exit code as the only signal on Windows.)
 
-## Routes (Step 5)
+## Routes
 
 | Path | Purpose |
 |------|---------|
 | `/` | Redirect → `/fleet` |
-| `/fleet` | Dashboard-style placeholders (nodes) |
-| `/desired-state` | Placeholder |
-| `/live-logs` | Placeholder + WS notes |
+| `/login` | Admin token 登录（sessionStorage） |
+| `/fleet` | 节点列表、增删改、同步、终端抽屉 |
+| `/desired-state` | 全局期望 upstream / rewrite |
+| `/live-logs` | 同源 WebSocket 聚合日志 |
