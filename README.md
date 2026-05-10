@@ -14,7 +14,7 @@
 | `cmd/dnsfleet/` | Go 可执行入口 |
 | `internal/` | 应用私有代码 |
 | `api/` | 预留 API 契约 |
-| `web/` | 预留前端工程 |
+| `web/` | 前端（Next.js）；开发与联调见 [`web/README.md`](web/README.md) |
 | `deploy/` | 预留容器与编排 |
 | `scripts/` | 可选脚本 |
 
