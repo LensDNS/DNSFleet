@@ -1,6 +1,6 @@
 # webui (embedded static frontend)
 
-The control plane serves the dashboard by embedding **`dist/`** via **`go:embed`**.
+The control plane serves the dashboard by embedding **`dist/`** via **`//go:embed all:dist`** (the `all:` prefix is required so Next’s **`_next/`** tree is included; a plain `dist` pattern skips names beginning with **`_`** per the Go **`embed`** package rules).
 
 ## Populate `dist/`
 

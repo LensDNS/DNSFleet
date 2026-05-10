@@ -197,6 +197,10 @@ func (r *Routes) postSync(c echo.Context) error {
 				res.OK = true
 				now := time.Now().UTC()
 				_ = r.Deps.DB.WithContext(ctx).Model(&models.Node{}).Where("id = ?", n.ID).Update("last_sync_at", &now).Error
+				// Sync only touches dns_config / rewrite APIs; drift uses dns_info+rewrite but add-node probe uses
+				// GET /control/status. Re-probe here so Online/Version/LastPingMs match status after a successful push
+				// (and operators see /control/status alongside dns_* traffic when capturing).
+				_ = probeAndPersist(ctx, r.Deps.DB, n.ID)
 			}
 			mu.Lock()
 			results = append(results, res)

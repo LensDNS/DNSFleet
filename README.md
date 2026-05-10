@@ -44,7 +44,7 @@
 
 `go run ./cmd/dnsfleet`（或 `go build -o bin/dnsfleet ./cmd/dnsfleet` 后运行二进制）。启动时初始化 SQLite 并 `AutoMigrate`，构造 **`internal/querylog` Hub**（与漂移同源根 `context`），注册 **`GET /healthz`**（不经 Admin）、**`/api/v1/ws/logs`**（WebSocket，经 `AdminWS`）与 **`/api/v1`** REST（经 Admin，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。HTTP 在独立 goroutine 监听；主 goroutine 等待 **SIGINT/SIGTERM** 后先 **`cancel`** 根 context（停止漂移与 **querylog Hub 轮询**），再 **`e.Shutdown`**。**健康检查**：`GET /healthz` → `200`，响应体纯文本 `ok`。
 
-生产形态（默认）：Web UI 为 Next **静态导出**，由 **`go:embed`** 打进二进制并在 **同一端口** 与 API 一并提供（无独立 Next 进程）。本地修改前端后须先在 `web/` 执行 **`npm run build`**，再同步到 [`internal/webui/dist`](internal/webui/dist)（见 **`Makefile` `ensure-webui-dist`** 或 [`scripts/ensure-webui-dist.ps1`](scripts/ensure-webui-dist.ps1)），否则嵌入资源仍是旧版。
+生产形态（默认）：Web UI 为 Next **静态导出**，由 **`go:embed`**（`all:dist`，否则 **`_next/`** 不会进包，见 [`internal/webui/embed.go`](internal/webui/embed.go) 注释）打进二进制并在 **同一端口** 与 API 一并提供（无独立 Next 进程）。本地修改前端后须先在 `web/` 执行 **`npm run build`**，再同步到 [`internal/webui/dist`](internal/webui/dist)（见 **`Makefile` `ensure-webui-dist`** 或 [`scripts/ensure-webui-dist.ps1`](scripts/ensure-webui-dist.ps1)），然后 **`go run -a ./cmd/dnsfleet`** 或重新 **`go build`**，否则可能仍使用缓存里旧的嵌入资源。
 
 ### Docker / Compose（一键运行）
 

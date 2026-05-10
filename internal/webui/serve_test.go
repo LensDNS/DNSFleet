@@ -2,6 +2,7 @@ package webui
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -68,6 +69,42 @@ func TestMount_HEADRoot_200EmptyBody(t *testing.T) {
 	ct := rec.Header().Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("HEAD / Content-Type = %q want text/html prefix", ct)
+	}
+}
+
+func TestEmbedHasNextCSSChunk(t *testing.T) {
+	t.Helper()
+	var nextCount int
+	_ = fs.WalkDir(Static, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(path, "_next") && !d.IsDir() {
+			nextCount++
+		}
+		return nil
+	})
+	if nextCount == 0 {
+		t.Fatalf("embed has no files under _next/ (got 0); check //go:embed and internal/webui/dist contents at compile time")
+	}
+	_, err := Static.Open("_next/static/chunks/0d586np2i0zz6.css")
+	if err != nil {
+		t.Fatalf("embed missing css: %v", err)
+	}
+}
+
+func TestMount_nextStaticChunk(t *testing.T) {
+	e := echo.New()
+	Mount(e)
+	req := httptest.NewRequest(http.MethodGet, "/_next/static/chunks/0d586np2i0zz6.css", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /_next/static/chunks/0d586np2i0zz6.css = %d body=%.200s", rec.Code, rec.Body.String())
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/css") {
+		t.Fatalf("Content-Type = %q want text/css prefix", ct)
 	}
 }
 

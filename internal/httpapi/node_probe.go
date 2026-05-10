@@ -9,7 +9,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// probeAndPersist runs GetStatus and updates the node row. On failure sets Online=false and returns err.
+// probeAndPersist runs GET /control/status (adguard.Client.GetStatus) and updates the node row.
+// On failure sets Online=false and returns err.
+// Drift detection (drift.go) does not call GetStatus; it uses GetDNSConfig + ListRewrites.
 func probeAndPersist(ctx context.Context, db *gorm.DB, id uint) error {
 	var n models.Node
 	if err := db.WithContext(ctx).First(&n, id).Error; err != nil {

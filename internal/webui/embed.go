@@ -7,7 +7,10 @@ import (
 	"io/fs"
 )
 
-//go:embed dist
+// Next.js puts assets under "_next/"; go:embed skips names beginning with "_" or "."
+// unless the pattern uses the "all:" prefix. See https://pkg.go.dev/embed#hdr-Directives
+//
+//go:embed all:dist
 var embeddedDist embed.FS
 
 // Static is the filesystem rooted at the exported site (contents of internal/webui/dist).
