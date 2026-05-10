@@ -11,6 +11,33 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// nextStaticCSSChunkRelPath returns the first embedded path like
+// "_next/static/chunks/<build-id>.css" (Next hashes change per build).
+func nextStaticCSSChunkRelPath(t *testing.T) string {
+	t.Helper()
+	var cssPath string
+	err := fs.WalkDir(Static, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasPrefix(path, "_next/static/chunks/") && strings.HasSuffix(path, ".css") {
+			cssPath = path
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embed: %v", err)
+	}
+	if cssPath == "" {
+		t.Fatalf("no _next/static/chunks/*.css in embed; run web build + ensure-webui-dist")
+	}
+	return cssPath
+}
+
 func TestEmbedHasIndexHTML(t *testing.T) {
 	t.Helper()
 	f, err := Static.Open("index.html")
@@ -87,20 +114,22 @@ func TestEmbedHasNextCSSChunk(t *testing.T) {
 	if nextCount == 0 {
 		t.Fatalf("embed has no files under _next/ (got 0); check //go:embed and internal/webui/dist contents at compile time")
 	}
-	_, err := Static.Open("_next/static/chunks/0d586np2i0zz6.css")
+	cssRel := nextStaticCSSChunkRelPath(t)
+	_, err := Static.Open(cssRel)
 	if err != nil {
-		t.Fatalf("embed missing css: %v", err)
+		t.Fatalf("embed missing css %q: %v", cssRel, err)
 	}
 }
 
 func TestMount_nextStaticChunk(t *testing.T) {
 	e := echo.New()
 	Mount(e)
-	req := httptest.NewRequest(http.MethodGet, "/_next/static/chunks/0d586np2i0zz6.css", nil)
+	cssURLPath := "/" + nextStaticCSSChunkRelPath(t)
+	req := httptest.NewRequest(http.MethodGet, cssURLPath, nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /_next/static/chunks/0d586np2i0zz6.css = %d body=%.200s", rec.Code, rec.Body.String())
+		t.Fatalf("GET %s = %d body=%.200s", cssURLPath, rec.Code, rec.Body.String())
 	}
 	ct := rec.Header().Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/css") {

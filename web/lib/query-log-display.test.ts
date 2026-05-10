@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   entryDetailSections,
   entryTimeToMs,
+  extractClientPresentation,
   formatDisplayTime,
   formatElapsedMsLabel,
+  inferResultKind,
   inferRowTone,
+  isSlowQuery,
   normalizeEntry,
+  parseElapsedMs,
 } from "./query-log-display";
 
 describe("normalizeEntry", () => {
@@ -26,11 +30,41 @@ describe("normalizeEntry", () => {
     const n = normalizeEntry({ elapsedMs: "23", question: { name: "x", type: "A" } });
     expect(n.elapsedMsLabel).toBe("23 ms");
   });
+
+  it("CID/name primary and IP secondary when client_info present", () => {
+    const n = normalizeEntry({
+      question: { name: "q", type: "A" },
+      client: "192.168.1.10",
+      client_info: { name: "living-room-tv" },
+    });
+    expect(n.clientPrimary).toBe("living-room-tv");
+    expect(n.clientSecondary).toBe("192.168.1.10");
+  });
+
+  it("IP only when no client_info name", () => {
+    const n = normalizeEntry({
+      question: { name: "q", type: "A" },
+      client: "10.0.0.2",
+    });
+    expect(n.clientPrimary).toBe("10.0.0.2");
+    expect(n.clientSecondary).toBe("");
+  });
 });
 
 describe("formatElapsedMsLabel", () => {
   it("returns dash for empty", () => {
     expect(formatElapsedMsLabel(undefined)).toBe("—");
+  });
+});
+
+describe("parseElapsedMs / isSlowQuery", () => {
+  it("detects slow when above default threshold", () => {
+    expect(isSlowQuery({ elapsedMs: 150 })).toBe(true);
+    expect(isSlowQuery({ elapsedMs: 50 })).toBe(false);
+  });
+
+  it("parses string elapsed", () => {
+    expect(parseElapsedMs({ elapsedMs: "120" })).toBe(120);
   });
 });
 
@@ -76,20 +110,77 @@ describe("formatDisplayTime", () => {
   });
 });
 
-describe("inferRowTone", () => {
+describe("extractClientPresentation", () => {
+  it("prefers client_info.name over IP", () => {
+    expect(
+      extractClientPresentation({
+        client: "192.168.0.1",
+        client_info: { name: "kid-laptop" },
+      }),
+    ).toEqual({ primary: "kid-laptop", secondary: "192.168.0.1" });
+  });
+});
+
+describe("inferResultKind", () => {
   it("blocked on filter-like reason", () => {
-    expect(inferRowTone({ reason: "Filtered", status: "NOERROR" })).toBe("blocked");
+    expect(inferResultKind({ reason: "Filtered", status: "NOERROR" })).toBe("blocked");
+  });
+  it("blocked wins over cache_hit", () => {
+    expect(inferResultKind({ reason: "Filtered", status: "NOERROR", cached: true })).toBe("blocked");
   });
   it("rewrite", () => {
-    expect(inferRowTone({ reason: "DNS rewrite", status: "NOERROR" })).toBe("rewrite");
+    expect(inferResultKind({ reason: "DNS rewrite", status: "NOERROR" })).toBe("rewrite");
   });
   it("rewrite single word", () => {
-    expect(inferRowTone({ reason: "Rewrite", status: "NOERROR" })).toBe("rewrite");
+    expect(inferResultKind({ reason: "Rewrite", status: "NOERROR" })).toBe("rewrite");
   });
   it("allowed / whitelist", () => {
-    expect(inferRowTone({ reason: "Allowed by whitelist", status: "NOERROR" })).toBe("allowed");
+    expect(inferResultKind({ reason: "Allowed by whitelist", status: "NOERROR" })).toBe("allowed");
+  });
+  it("cache_hit from cached flag", () => {
+    expect(inferResultKind({ status: "NOERROR", reason: "", cached: true })).toBe("cache_hit");
+  });
+  it("SERVFAIL", () => {
+    expect(inferResultKind({ status: "SERVFAIL", reason: "" })).toBe("servfail");
+  });
+  it("timeout blob", () => {
+    expect(inferResultKind({ status: "NOERROR", reason: "upstream timeout" })).toBe("timeout");
+  });
+  it("timeout before servfail when timeout explicit", () => {
+    expect(inferResultKind({ status: "SERVFAIL", reason: "i/o timeout" })).toBe("timeout");
   });
   it("normal NOERROR neutral", () => {
-    expect(inferRowTone({ status: "NOERROR", reason: "" })).toBe("neutral");
+    expect(inferResultKind({ status: "NOERROR", reason: "" })).toBe("neutral");
+  });
+
+  // AdGuard Home JSON `reason` is often a PascalCase enum with no spaces (reason.go → reasonNames).
+  it("FilteredBlackList (no-space enum) is blocked", () => {
+    expect(inferResultKind({ reason: "FilteredBlackList", status: "NOERROR" })).toBe("blocked");
+  });
+  it("FilteredBlackList still beats cache_hit", () => {
+    expect(inferResultKind({ reason: "FilteredBlackList", status: "NOERROR", cached: true })).toBe(
+      "blocked",
+    );
+  });
+  it("NotFilteredWhiteList is allow-list (maps to allowed)", () => {
+    expect(inferResultKind({ reason: "NotFilteredWhiteList", status: "NOERROR" })).toBe("allowed");
+  });
+  it("NotFilteredNotFound is neutral (not rule-allow)", () => {
+    expect(inferResultKind({ reason: "NotFilteredNotFound", status: "NOERROR" })).toBe("neutral");
+  });
+  it("unknown FilteredFooEnum treated as blocked via Filtered* prefix", () => {
+    expect(inferResultKind({ reason: "FilteredFutureKind", status: "NOERROR" })).toBe("blocked");
+  });
+  it("RewriteRule from AdGH enum", () => {
+    expect(inferResultKind({ reason: "RewriteRule", status: "NOERROR" })).toBe("rewrite");
+  });
+  it("SERVFAIL still wins over NotFilteredNotFound neutral tag", () => {
+    expect(inferResultKind({ reason: "NotFilteredNotFound", status: "SERVFAIL" })).toBe("servfail");
+  });
+});
+
+describe("inferRowTone alias", () => {
+  it("matches inferResultKind", () => {
+    expect(inferRowTone({ status: "SERVFAIL" })).toBe("servfail");
   });
 });

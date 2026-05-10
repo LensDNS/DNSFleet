@@ -21,12 +21,16 @@ import {
   entryTimeToMs,
   formatDisplayTime,
   formatResponseSummaryLine,
-  inferRowTone,
+  inferResultKind,
+  isSlowQuery,
   normalizeEntry,
-  rowToneBorderClass,
-  rowToneRowClass,
+  resultKindAriaLabel,
+  resultKindBorderClass,
+  resultKindRowClass,
+  resultKindShortLabel,
+  slowQueryRowAccentClass,
   type NormalizedQueryLogEntry,
-  type RowTone,
+  type ResultKind,
 } from "@/lib/query-log-display";
 import {
   logRowDedupeKeyHex,
@@ -50,7 +54,8 @@ type LogRow = {
   nodeName: string;
   entry: Record<string, unknown>;
   normalized: NormalizedQueryLogEntry;
-  rowTone: RowTone;
+  resultKind: ResultKind;
+  slowQuery: boolean;
 };
 
 type SystemLine = {
@@ -71,6 +76,8 @@ function snapshotLogRow(row: LogRow): LogRow {
     ...row,
     entry: { ...row.entry },
     normalized: { ...row.normalized },
+    resultKind: row.resultKind,
+    slowQuery: row.slowQuery,
   };
 }
 
@@ -91,21 +98,9 @@ async function buildLogRow(
     nodeName,
     entry: { ...entry },
     normalized: normalizeEntry(entry),
-    rowTone: inferRowTone(entry),
+    resultKind: inferResultKind(entry),
+    slowQuery: isSlowQuery(entry),
   };
-}
-
-function toneAriaLabel(tone: RowTone): string {
-  switch (tone) {
-    case "blocked":
-      return "拦截";
-    case "rewrite":
-      return "重写";
-    case "allowed":
-      return "规则放行";
-    default:
-      return "正常";
-  }
 }
 
 export default function LiveLogsPage() {
@@ -125,6 +120,8 @@ export default function LiveLogsPage() {
   const fetchGen = useRef(0);
   const warnedNoUrl = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const autoFillBursts = useRef(0);
+  const prevLogLen = useRef(0);
 
   useEffect(
     () => () => {
@@ -237,6 +234,41 @@ export default function LiveLogsPage() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight > 100) return;
     void loadOlderPage();
   }, [loadOlderPage]);
+
+  const historyStatusMessage = useMemo(() => {
+    const ids = Object.keys(nodeTails)
+      .map(Number)
+      .filter((id) => Number.isFinite(id));
+    if (ids.length === 0) return null;
+    const exhausted = ids.filter((id) => {
+      const s = nodeTails[id];
+      return !s || s.exhausted || s.nextOlderThan === null;
+    });
+    if (exhausted.length === 0) return null;
+    if (exhausted.length === ids.length) {
+      return "已无更老记录（当前在线节点在查询日志中的分页均已耗尽）。";
+    }
+    return "部分节点已无更老记录；其余节点在列表滚底时仍可继续加载更旧页。";
+  }, [nodeTails]);
+
+  useEffect(() => {
+    if (logRows.length !== prevLogLen.current) {
+      prevLogLen.current = logRows.length;
+      autoFillBursts.current = 0;
+    }
+  }, [logRows.length]);
+
+  /** When the table is shorter than the viewport, still chase `older_than` until scrollable or exhausted. */
+  useEffect(() => {
+    if (initialLoad !== "ready") return;
+    const el = scrollRef.current;
+    if (!el || logRows.length === 0) return;
+    const short = el.scrollHeight <= el.clientHeight + 8;
+    if (!short) return;
+    if (autoFillBursts.current >= 20) return;
+    autoFillBursts.current += 1;
+    void loadOlderPage();
+  }, [logRows.length, nodeTails, initialLoad, loadOlderPage]);
 
   useEffect(() => {
     const gen = ++fetchGen.current;
@@ -426,10 +458,12 @@ export default function LiveLogsPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Live Logs</h1>
-        <p className="rounded-md border border-amber-600/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">
-          风险提示：实时日志经同源 WebSocket；有 Admin 时 token 可能出现在 Query 中（勿分享链接、勿在生产依赖裸
-          Query）。自动重连采用指数退避（上限 30s）。首屏与滚底经 REST 拉取历史，WS 推送增量；列表按时间新在上。
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Live Logs</h1>
+        <p className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
+          <span className="text-muted-foreground">
+            风险提示：实时日志经同源 WebSocket；有 Admin 时 token 可能出现在 Query 中（勿分享链接、勿在生产依赖裸
+            Query）。自动重连采用指数退避（上限 30s）。首屏与滚底经 REST 拉取历史，WS 推送增量；列表按时间新在上。
+          </span>
         </p>
         <p className="text-muted-foreground mt-1 text-xs">
           连接状态：{status}（合并最多 {MAX_MERGED_LOG_LINES} 条）
@@ -447,7 +481,7 @@ export default function LiveLogsPage() {
           <ScrollArea className="max-h-36 px-2">
             <ul className="space-y-1 pb-2 font-mono text-[11px] text-muted-foreground">
               {systemLines.length === 0 ? (
-                <li className="px-1 py-1 text-zinc-500">（暂无）</li>
+                <li className="px-1 py-1 text-muted-foreground">（暂无）</li>
               ) : (
                 systemLines.map((line) => (
                   <li key={line.key} className="rounded bg-background/80 px-2 py-1">
@@ -463,31 +497,31 @@ export default function LiveLogsPage() {
         </details>
       </section>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-zinc-950/80">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-card">
         <div
           ref={scrollRef}
           className="min-h-0 flex-1 overflow-auto"
           onScroll={onTableScroll}
         >
-          <table className="w-full min-w-[880px] border-collapse text-left text-xs text-zinc-100">
+          <table className="w-full min-w-[880px] border-collapse text-left text-xs text-foreground">
             <thead>
-              <tr className="sticky top-0 z-10 border-b border-border bg-zinc-950 shadow-sm">
-                <th scope="col" className="whitespace-nowrap px-2 py-2 font-medium text-zinc-400">
+              <tr className="sticky top-0 z-10 border-b border-border bg-muted/80 shadow-sm backdrop-blur-sm">
+                <th scope="col" className="whitespace-nowrap px-2 py-2 font-medium text-muted-foreground">
                   时间
                 </th>
-                <th scope="col" className="whitespace-nowrap px-2 py-2 font-medium text-zinc-400">
+                <th scope="col" className="whitespace-nowrap px-2 py-2 font-medium text-muted-foreground">
                   节点
                 </th>
-                <th scope="col" className="min-w-[140px] px-2 py-2 font-medium text-zinc-400">
+                <th scope="col" className="min-w-[140px] px-2 py-2 font-medium text-muted-foreground">
                   请求
                 </th>
-                <th scope="col" className="min-w-[160px] px-2 py-2 font-medium text-zinc-400">
+                <th scope="col" className="min-w-[160px] px-2 py-2 font-medium text-muted-foreground">
                   响应
                 </th>
-                <th scope="col" className="min-w-[120px] px-2 py-2 font-medium text-zinc-400">
+                <th scope="col" className="min-w-[120px] px-2 py-2 font-medium text-muted-foreground">
                   客户端
                 </th>
-                <th scope="col" className="w-10 px-1 py-2 text-center font-medium text-zinc-400">
+                <th scope="col" className="w-10 px-1 py-2 text-center font-medium text-muted-foreground">
                   <span className="sr-only">响应细节</span>
                 </th>
               </tr>
@@ -514,42 +548,76 @@ export default function LiveLogsPage() {
                       key={row.key}
                       className={cn(
                         "border-b border-border/60 transition-colors",
-                        rowToneRowClass(row.rowTone),
-                        rowToneBorderClass(row.rowTone),
+                        resultKindRowClass(row.resultKind),
+                        resultKindBorderClass(row.resultKind),
+                        slowQueryRowAccentClass(row.slowQuery),
                       )}
-                      aria-label={toneAriaLabel(row.rowTone)}
+                      aria-label={`${resultKindAriaLabel(row.resultKind)}${row.slowQuery ? "；慢查询" : ""}`}
                     >
-                      <td className="whitespace-nowrap px-2 py-1.5 align-top font-mono text-[11px] text-zinc-300">
+                      <td className="whitespace-nowrap px-2 py-1.5 align-top font-mono text-[11px] text-muted-foreground">
                         {timeStr}
                       </td>
-                      <td className="max-w-[120px] truncate px-2 py-1.5 align-top text-cyan-300" title={row.nodeName}>
+                      <td
+                        className="max-w-[120px] truncate px-2 py-1.5 align-top text-muted-foreground transition-colors hover:text-foreground"
+                        title={row.nodeName}
+                      >
                         {row.nodeName}
                         <span className="sr-only"> node id {row.nodeId}</span>
                       </td>
                       <td className="max-w-[220px] px-2 py-1.5 align-top">
-                        <div className="truncate font-medium text-zinc-100" title={row.normalized.requestLine}>
+                        <div className="truncate font-medium text-foreground" title={row.normalized.requestLine}>
                           {row.normalized.requestLine}
                         </div>
                       </td>
                       <td className="max-w-[260px] px-2 py-1.5 align-top">
-                        <div className="truncate text-zinc-200" title={summaryLine}>
+                        <div className="truncate text-foreground" title={summaryLine}>
                           {summaryLine}
                         </div>
-                        {row.rowTone !== "neutral" ? (
-                          <span className="mt-0.5 inline-block text-[10px] text-muted-foreground">
-                            [{toneAriaLabel(row.rowTone)}]
-                          </span>
-                        ) : null}
+                        <div className="mt-0.5 flex flex-wrap gap-1">
+                          {row.resultKind !== "neutral" ? (
+                            <Badge
+                              variant="outline"
+                              className="max-w-full truncate border-border/80 font-normal text-[10px] text-foreground"
+                              title={resultKindAriaLabel(row.resultKind)}
+                            >
+                              {resultKindShortLabel(row.resultKind)}
+                            </Badge>
+                          ) : null}
+                          {row.slowQuery ? (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-500/40 font-normal text-[10px] text-foreground"
+                              title="耗时超过阈值（见 NEXT_PUBLIC_DNSFLEET_SLOW_QUERY_MS，默认 100 ms）"
+                            >
+                              慢查询
+                            </Badge>
+                          ) : null}
+                        </div>
                       </td>
-                      <td className="max-w-[160px] truncate px-2 py-1.5 align-top font-mono text-[11px]" title={row.normalized.client}>
-                        {row.normalized.client}
+                      <td
+                        className="max-w-[180px] px-2 py-1.5 align-top text-left"
+                        title={[row.normalized.clientPrimary, row.normalized.clientSecondary]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      >
+                        <div className="truncate text-sm font-medium text-foreground" title={row.normalized.clientPrimary}>
+                          {row.normalized.clientPrimary}
+                        </div>
+                        {row.normalized.clientSecondary ? (
+                          <div
+                            className="truncate font-mono text-[11px] text-muted-foreground"
+                            title={row.normalized.clientSecondary}
+                          >
+                            {row.normalized.clientSecondary}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-1 py-1 align-top text-center">
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-xs"
-                          className="text-zinc-400 hover:text-zinc-100"
+                          className="text-muted-foreground hover:text-foreground"
                           aria-label="响应细节与原始 JSON"
                           onClick={() => setDetail(snapshotLogRow(row))}
                         >
@@ -560,6 +628,13 @@ export default function LiveLogsPage() {
                   );
                 })
               )}
+              {historyStatusMessage ? (
+                <tr className="border-t border-border bg-muted/30">
+                  <td colSpan={6} className="px-3 py-2 text-center text-muted-foreground">
+                    {historyStatusMessage}
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -596,20 +671,25 @@ export default function LiveLogsPage() {
                   <div className="break-words text-foreground">{detail.normalized.reason}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">客户端</div>
-                  <div className="break-all font-mono text-foreground">{detail.normalized.client}</div>
+                  <div className="text-muted-foreground">客户端（摘要）</div>
+                  <div className="break-words text-sm font-medium text-foreground">{detail.normalized.clientPrimary}</div>
+                  {detail.normalized.clientSecondary ? (
+                    <div className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">
+                      {detail.normalized.clientSecondary}
+                    </div>
+                  ) : null}
                 </div>
                 {detailSections.map((sec) => (
                   <div key={sec.title}>
                     <div className="text-muted-foreground">{sec.title}</div>
-                    <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-zinc-100">
+                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-2 font-mono text-[11px] text-foreground">
                       {sec.body}
                     </pre>
                   </div>
                 ))}
                 <div className="mt-auto border-t border-border pt-3">
                   <div className="text-sm font-medium text-foreground">原始 entry（JSON）</div>
-                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-zinc-100">
+                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 p-2 font-mono text-[10px] text-foreground">
                     {detailJson}
                   </pre>
                 </div>

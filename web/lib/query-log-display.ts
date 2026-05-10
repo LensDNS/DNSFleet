@@ -1,9 +1,32 @@
 /**
  * AdGuard Home–style query log display helpers (defensive parsing).
  * RCODE (`status`) must never be merged into `answerSummary` string logic.
+ *
+ * Result visual priority (product): blocked > timeout > servfail > rewrite >
+ * cache_hit > allowed > neutral. Slow-query accent may layer on top (see `isSlowQuery`).
+ *
+ * **Row colors (`inferResultKind`)** use AdGH fields `reason`, `status`, `cached`, etc.
+ * Common `reason` enum strings from AdGuard Home (`internal/filtering/reason.go` → JSON
+ * names such as `FilteredBlackList`, `NotFilteredWhiteList`) are mapped explicitly; unknown
+ * values fall back to regex heuristics, then `neutral`.
+ *
+ * **Slow query (`isSlowQuery`)** uses `entry.elapsedMs` as reported by AdGuard Home
+ * (resolver-side processing), not browser-to-control-plane RTT. Default threshold 100 ms
+ * via `NEXT_PUBLIC_DNSFLEET_SLOW_QUERY_MS`. High upstream latency can surface many
+ * “慢查询” badges—raise the threshold or fix DNS rather than treating it as network RTT.
  */
 
-export type RowTone = "blocked" | "rewrite" | "allowed" | "neutral";
+export type ResultKind =
+  | "blocked"
+  | "servfail"
+  | "timeout"
+  | "rewrite"
+  | "cache_hit"
+  | "allowed"
+  | "neutral";
+
+/** Alias of {@link ResultKind} for older call sites. */
+export type RowTone = ResultKind;
 
 export interface NormalizedQueryLogEntry {
   questionName: string;
@@ -14,7 +37,12 @@ export interface NormalizedQueryLogEntry {
   status: string;
   /** Short RR summary; never contains RCODE text by construction. */
   answerSummary: string;
+  /** Legacy combined client cell; prefer {@link clientPrimary} / {@link clientSecondary}. */
   client: string;
+  /** Client ID / hostname / display name when present (primary in table). */
+  clientPrimary: string;
+  /** IP or secondary client string (muted row below primary). */
+  clientSecondary: string;
   upstream: string;
   reason: string;
   elapsedMsLabel: string;
@@ -42,6 +70,36 @@ export function formatElapsedMsLabel(ms: unknown): string {
   const n = Number(raw.replace(/[^\d.-]/g, ""));
   if (Number.isFinite(n)) return `${Math.round(n)} ms`;
   return "—";
+}
+
+/** Raw elapsed in ms for thresholds; null when missing / unparsable. */
+export function parseElapsedMs(entry: Record<string, unknown>): number | null {
+  const ms = entry.elapsedMs;
+  if (ms === null || ms === undefined) return null;
+  if (typeof ms === "number" && Number.isFinite(ms)) return ms;
+  const raw = String(ms).trim();
+  if (!raw) return null;
+  const n = Number(raw.replace(/[^\d.-]/g, ""));
+  if (Number.isFinite(n)) return n;
+  return null;
+}
+
+/**
+ * Optional build-time override: `NEXT_PUBLIC_DNSFLEET_SLOW_QUERY_MS` (positive number).
+ * Default 100 ms.
+ */
+export function slowQueryThresholdMs(): number {
+  if (typeof process === "undefined") return 100;
+  const raw = process.env.NEXT_PUBLIC_DNSFLEET_SLOW_QUERY_MS;
+  if (raw === undefined || raw === "") return 100;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 100;
+}
+
+export function isSlowQuery(entry: Record<string, unknown>, thresholdMs?: number): boolean {
+  const t = thresholdMs ?? slowQueryThresholdMs();
+  const n = parseElapsedMs(entry);
+  return n !== null && n > t;
 }
 
 function parseQuestion(entry: Record<string, unknown>): { name: string; type: string } {
@@ -81,6 +139,224 @@ function summarizeAnswer(entry: Record<string, unknown>): string {
   return head;
 }
 
+/**
+ * CID / display name first, IP (`client`) second when both differ.
+ * Defensive over `client_info` shapes from AdGuard Home.
+ */
+export function extractClientPresentation(entry: Record<string, unknown>): {
+  primary: string;
+  secondary: string;
+} {
+  const clientRaw = asString(entry.client).trim();
+  const ci = entry.client_info;
+  let primary = "";
+  if (ci && typeof ci === "object" && !Array.isArray(ci)) {
+    const o = ci as Record<string, unknown>;
+    primary =
+      asString(o.name).trim() ||
+      asString(o.display_name).trim() ||
+      asString(o.hostname).trim() ||
+      asString(o.cid).trim();
+  }
+  if (!primary) {
+    primary = asString(entry.cid).trim();
+  }
+  if (primary) {
+    if (!clientRaw || primary === clientRaw) return { primary, secondary: "" };
+    return { primary, secondary: clientRaw };
+  }
+  return { primary: clientRaw, secondary: "" };
+}
+
+function isTimeoutBlob(blob: string): boolean {
+  return /\b(timeout|timed out|time out|i\/o timeout|deadline exceeded|context deadline|upstream.*timeout|超时)\b/i.test(
+    blob,
+  );
+}
+
+function isServfailBlob(blob: string, statusUpper: string): boolean {
+  if (/\bSERVFAIL\b/.test(statusUpper)) return true;
+  return /\b(servfail|server fail|upstream error)\b/i.test(blob);
+}
+
+function isCacheHitEntry(entry: Record<string, unknown>, blob: string): boolean {
+  if (entry.cached === true) return true;
+  return /\b(from cache|cache hit|cached response)\b/i.test(blob);
+}
+
+/**
+ * Exact `reason` strings emitted by AdGuard Home query logs (see upstream
+ * `internal/filtering/reason.go` → `reasonNames`). Keys must match JSON casing.
+ * Values are intermediate tags; {@link inferResultKind} still applies the global priority chain.
+ */
+const ADGUARD_REASON_EXACT: Record<string, "blocked" | "allowed" | "rewrite" | "neutral"> = {
+  // Filtered* → blocked (API uses e.g. FilteredBlackList for FilteredBlockList)
+  FilteredBlackList: "blocked",
+  FilteredSafeBrowsing: "blocked",
+  FilteredParental: "blocked",
+  FilteredInvalid: "blocked",
+  FilteredSafeSearch: "blocked",
+  FilteredBlockedService: "blocked",
+  // Allow-list pass (API string is NotFilteredWhiteList)
+  NotFilteredWhiteList: "allowed",
+  // Default “processed”, not rule-allow semantics
+  NotFilteredNotFound: "neutral",
+  NotFilteredError: "neutral",
+  // Rewrite family (API uses Rewrite / RewriteEtcHosts / RewriteRule)
+  Rewrite: "rewrite",
+  RewriteEtcHosts: "rewrite",
+  RewriteRule: "rewrite",
+};
+
+function explicitAdGuardReasonTag(
+  reason: string,
+): "blocked" | "allowed" | "rewrite" | "neutral" | undefined {
+  const t = reason.trim();
+  if (!t) return undefined;
+  return ADGUARD_REASON_EXACT[t];
+}
+
+/** Forward-compat: new `FilteredFoo` enum values from AdGH without updating the table. */
+function isAdGuardFilteredEnum(reason: string): boolean {
+  return /^Filtered[A-Za-z0-9]+$/.test(reason.trim());
+}
+
+function isBlockedReasonOrHeuristic(reason: string, blob: string): boolean {
+  const tag = explicitAdGuardReasonTag(reason);
+  if (tag === "blocked") return true;
+  if (isAdGuardFilteredEnum(reason)) return true;
+  return (
+    /\b(blocked|filtered|denied|not allowed|dnsfilter|adblock)\b|拦截|拒绝|过滤/.test(blob)
+  );
+}
+
+/**
+ * Infers row result kind using the product priority chain.
+ */
+export function inferResultKind(entry: Record<string, unknown>): ResultKind {
+  const reason = asString(entry.reason).trim();
+  const status = asString(entry.status);
+  const blob = `${reason} ${status}`.toLowerCase();
+  const statusUpper = status.toUpperCase();
+
+  if (isBlockedReasonOrHeuristic(reason, blob)) return "blocked";
+  if (isTimeoutBlob(blob)) return "timeout";
+  if (isServfailBlob(blob, statusUpper)) return "servfail";
+
+  const ex = explicitAdGuardReasonTag(reason);
+  if (ex === "rewrite") return "rewrite";
+  if (/\b(rewrite|rewritten|dns rewrite)\b|重写/.test(blob)) return "rewrite";
+
+  if (isCacheHitEntry(entry, blob)) return "cache_hit";
+
+  if (ex === "allowed") return "allowed";
+  if (/\b(allowlist|whitelist|allowed by rule|custom allow)\b|放行|白名单/.test(blob)) {
+    return "allowed";
+  }
+
+  if (ex === "neutral") return "neutral";
+  return "neutral";
+}
+
+/** @see {@link inferResultKind} */
+export function inferRowTone(entry: Record<string, unknown>): RowTone {
+  return inferResultKind(entry);
+}
+
+export function resultKindAriaLabel(kind: ResultKind): string {
+  switch (kind) {
+    case "blocked":
+      return "拦截或策略拒绝";
+    case "servfail":
+      return "上游或协议失败";
+    case "timeout":
+      return "解析超时或上游超时";
+    case "rewrite":
+      return "DNS 重写";
+    case "cache_hit":
+      return "缓存命中";
+    case "allowed":
+      return "规则放行";
+    default:
+      return "正常解析";
+  }
+}
+
+export function resultKindShortLabel(kind: ResultKind): string {
+  switch (kind) {
+    case "blocked":
+      return "拦截";
+    case "servfail":
+      return "SERVFAIL";
+    case "timeout":
+      return "超时";
+    case "rewrite":
+      return "重写";
+    case "cache_hit":
+      return "缓存";
+    case "allowed":
+      return "放行";
+    default:
+      return "正常";
+  }
+}
+
+/** Row background (low saturation; works in light + dark). */
+export function resultKindRowClass(kind: ResultKind): string {
+  switch (kind) {
+    case "blocked":
+      return "bg-rose-500/[0.07] hover:bg-rose-500/[0.11] dark:bg-rose-400/[0.08] dark:hover:bg-rose-400/[0.11]";
+    case "servfail":
+      return "bg-orange-500/[0.08] hover:bg-orange-500/[0.12] dark:bg-orange-400/[0.09] dark:hover:bg-orange-400/[0.12]";
+    case "timeout":
+      return "bg-amber-400/[0.1] hover:bg-amber-400/[0.14] dark:bg-amber-300/[0.08] dark:hover:bg-amber-300/[0.11]";
+    case "rewrite":
+      return "bg-sky-500/[0.07] hover:bg-sky-500/[0.11] dark:bg-sky-400/[0.08] dark:hover:bg-sky-400/[0.11]";
+    case "cache_hit":
+      return "bg-emerald-500/[0.07] hover:bg-emerald-500/[0.11] dark:bg-emerald-400/[0.08] dark:hover:bg-emerald-400/[0.11]";
+    case "allowed":
+      return "bg-slate-500/[0.08] hover:bg-slate-500/[0.12] dark:bg-slate-400/[0.09] dark:hover:bg-slate-400/[0.12]";
+    default:
+      return "";
+  }
+}
+
+/** Left accent (non–color-only cue alongside labels). */
+export function resultKindBorderClass(kind: ResultKind): string {
+  switch (kind) {
+    case "blocked":
+      return "border-l-2 border-l-rose-400/55 dark:border-l-rose-300/45";
+    case "servfail":
+      return "border-l-2 border-l-orange-400/55 dark:border-l-orange-300/45";
+    case "timeout":
+      return "border-l-2 border-l-amber-500/50 dark:border-l-amber-300/45";
+    case "rewrite":
+      return "border-l-2 border-l-sky-400/55 dark:border-l-sky-300/45";
+    case "cache_hit":
+      return "border-l-2 border-l-emerald-400/50 dark:border-l-emerald-300/45";
+    case "allowed":
+      return "border-l-2 border-l-slate-400/50 dark:border-l-slate-400/40";
+    default:
+      return "border-l-2 border-l-transparent";
+  }
+}
+
+/** Subtle warm inset when elapsed exceeds slow threshold (respects reduced motion via static ring). */
+export function slowQueryRowAccentClass(slow: boolean): string {
+  if (!slow) return "";
+  return "shadow-[inset_0_0_0_1px_oklch(0.78_0.12_75_/_0.28)] dark:shadow-[inset_0_0_0_1px_oklch(0.72_0.12_75_/_0.32)]";
+}
+
+/** @see {@link resultKindRowClass} */
+export function rowToneRowClass(kind: RowTone): string {
+  return resultKindRowClass(kind);
+}
+
+/** @see {@link resultKindBorderClass} */
+export function rowToneBorderClass(kind: RowTone): string {
+  return resultKindBorderClass(kind);
+}
+
 export function normalizeEntry(entry: Record<string, unknown>): NormalizedQueryLogEntry {
   const { name, type } = parseQuestion(entry);
   const parts: string[] = [];
@@ -92,8 +368,11 @@ export function normalizeEntry(entry: Record<string, unknown>): NormalizedQueryL
   const answerSummary = summarizeAnswer(entry);
   const reason = dash(asString(entry.reason));
   const upstream = dash(asString(entry.upstream));
-  const client = dash(asString(entry.client));
   const elapsedMsLabel = formatElapsedMsLabel(entry.elapsedMs);
+
+  const { primary, secondary } = extractClientPresentation(entry);
+  const clientPrimary = dash(primary);
+  const clientSecondary = secondary.trim();
 
   let responseExtra = "";
   if (entry.cached === true) responseExtra = "cached";
@@ -104,60 +383,14 @@ export function normalizeEntry(entry: Record<string, unknown>): NormalizedQueryL
     requestLine,
     status,
     answerSummary,
-    client,
+    client: clientPrimary,
+    clientPrimary,
+    clientSecondary,
     upstream,
     reason,
     elapsedMsLabel,
     responseExtra,
   };
-}
-
-/**
- * Heuristic row semantics for background tint.
- * `neutral` = normal resolution / unknown (no row tint).
- * `allowed` = rule allow / whitelist-style hints.
- */
-export function inferRowTone(entry: Record<string, unknown>): RowTone {
-  const reason = asString(entry.reason).toLowerCase();
-  const status = asString(entry.status).toLowerCase();
-  const blob = `${reason} ${status}`;
-
-  if (/\b(rewrite|rewritten|dns rewrite)\b|重写/.test(blob)) return "rewrite";
-  if (/\b(allowlist|whitelist|allowed by rule|custom allow)\b|放行|白名单/.test(blob)) return "allowed";
-  if (
-    /\b(blocked|filtered|denied|not allowed|dnsfilter|adblock)\b|拦截|拒绝|过滤/.test(blob)
-  ) {
-    return "blocked";
-  }
-  return "neutral";
-}
-
-/** Tailwind row classes; `neutral` returns empty (no tint). */
-export function rowToneRowClass(tone: RowTone): string {
-  switch (tone) {
-    case "blocked":
-      return "bg-rose-950/30 hover:bg-rose-950/40";
-    case "rewrite":
-      return "bg-sky-950/30 hover:bg-sky-950/40";
-    case "allowed":
-      return "bg-emerald-950/30 hover:bg-emerald-950/40";
-    default:
-      return "";
-  }
-}
-
-/** Optional left border accent (non–color-only cue). */
-export function rowToneBorderClass(tone: RowTone): string {
-  switch (tone) {
-    case "blocked":
-      return "border-l-2 border-l-rose-400/70";
-    case "rewrite":
-      return "border-l-2 border-l-sky-400/70";
-    case "allowed":
-      return "border-l-2 border-l-emerald-400/70";
-    default:
-      return "border-l-2 border-l-transparent";
-  }
 }
 
 /**

@@ -114,4 +114,8 @@ npm run lint     # eslint
 | `/desired-state` | 全局期望 upstream / rewrite |
 | `/live-logs` | **REST 首屏 + 滚底** `GET /nodes/:id/querylog`（`older_than`）与 **WebSocket** 尾包合并；按时间新在上 |
 
-**Live Logs 页面**：对 **在线节点** 并行拉首屏 querylog，列表 **按 `entry.time` 降序**（最多 500 条，丢最旧）；滚到底继续 **`older_than`** 分页；多节点 **时间差过大** 时暂停某节点的深翻；**SHA-256**（`node_id` + `JSON.stringify(entry)`）去重 REST 与 WS。表格五列摘要；侧栏 **结构化完整响应**（`question` / `answer` RR / `rules` / `client_info` / `client_proto` 等）+ 底部 **原始 `entry` JSON**。**`rowTone` 行色**见 `lib/query-log-display.ts`；`npm test` 含摘要、`entryDetailSections` 与 `lib/live-logs-merge.ts`。
+**Live Logs 页面**：对 **在线节点** 并行拉首屏 querylog，列表 **按 `entry.time` 降序**（最多 500 条，丢最旧）；滚到底继续 **`older_than`** 分页；若列表高度不足视口会自动追加载直至可滚动或耗尽。多节点 **时间差过大** 时暂停某节点的深翻；**SHA-256**（`node_id` + `JSON.stringify(entry)`）去重 REST 与 WS。表格五列摘要；侧栏 **结构化完整响应**（`question` / `answer` RR / `rules` / `client_info` / `client_proto` 等）+ 底部 **原始 `entry` JSON**。结果行语义色与优先级见 `lib/query-log-display.ts`（`inferResultKind` 等）；`npm test` 含摘要、`entryDetailSections` 与 `lib/live-logs-merge.ts`。
+
+**Hub 尾包 vs REST 条数**：控制面 Hub 单页 `limit` 由环境变量 `DNSFLEET_QUERYLOG_PAGE_LIMIT`（常见 100）决定；浏览器 REST 历史分页默认 `limit=20`。合并列表上条数不必一致，**不是 bug**；详见仓库根 `README.md` 配置表。
+
+**Live Logs 行色与慢查询**：表格行的 `ResultKind` 由 `lib/query-log-display.ts` 的 `inferResultKind` 根据 AdGH 的 `reason` / `status` / `cached` 等推断；常见无空格枚举（如 `FilteredBlackList`、`NotFilteredWhiteList`）有显式映射并对齐上游 `reason.go`，未知值再走正则兜底后回落 `neutral`。**慢查询**徽章使用 AdGH 上报的 `elapsedMs`（解析侧耗时），不是浏览器到控制面的 RTT；默认阈值 100 ms，可用 `NEXT_PUBLIC_DNSFLEET_SLOW_QUERY_MS` 调大以降噪。
