@@ -1,0 +1,4 @@
+# Stable Go formatting across Windows/Linux/macOS CI (avoid CRLF vs LF gofmt drift).
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf

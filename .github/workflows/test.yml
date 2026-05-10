@@ -39,6 +39,7 @@ jobs:
           mkdir -p internal/webui/dist
           printf '%s\n' '<!DOCTYPE html><html><head><meta charset="utf-8"><title>DNSFleet</title></head><body></body></html>' > internal/webui/dist/index.html
 
+      # Needs repo-root .gitattributes (*.go eol=lf); otherwise Windows CRLF makes gofmt -l flag almost every file.
       - name: Go fmt (check only)
         run: |
           set -e
