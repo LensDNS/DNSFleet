@@ -1,4 +1,8 @@
-# On version tags (v*): full test matrix, GitHub Release, push image to GHCR.
+# On version tags (v*):
+# - Full test matrix (reusable test.yml)
+# - Cross-compiled static binaries → GitHub Release assets (linux/windows/darwin, amd64/arm64)
+# - Docker image → GHCR
+# - GitHub Release page (generated notes + attached binaries + SHA256SUMS)
 name: Release
 
 on:
@@ -13,6 +17,64 @@ permissions:
 jobs:
   test:
     uses: ./.github/workflows/test.yml
+
+  # Cross-compile from Linux (CGO_ENABLED=0; matches distroless-style static binary).
+  build-release-binaries:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build static web export
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Embed web UI for Go build
+        run: |
+          rm -rf internal/webui/dist
+          mkdir -p internal/webui/dist
+          cp -r web/out/. internal/webui/dist/
+
+      - name: Cross-compile dnsfleet binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-binaries
+          # linux/amd64, linux/arm64, windows/amd64, darwin/amd64, darwin/arm64
+          while IFS=: read -r goos goarch; do
+            ext=""
+            if [ "$goos" = "windows" ]; then ext=".exe"; fi
+            out="dist-binaries/dnsfleet-${VERSION}-${goos}-${goarch}${ext}"
+            echo "Building $out"
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/dnsfleet
+          done <<'EOF'
+          linux:amd64
+          linux:arm64
+          windows:amd64
+          darwin:amd64
+          darwin:arm64
+          EOF
+          (cd dist-binaries && sha256sum dnsfleet-* > SHA256SUMS)
+          ls -la dist-binaries
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: dist-binaries/
 
   docker-ghcr:
     needs: test
@@ -52,19 +114,44 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Production image: do not enable SKIP_ADMIN in the client bundle.
           build-args: |
             NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH=
 
   github-release:
-    needs: test
+    needs: build-release-binaries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Create GitHub Release
+      - name: Compose release body (tagged commit message, then auto-generated notes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git log -1 --format=%B HEAD > /tmp/tag-commit-msg.txt
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            --method POST \
+            -f "tag_name=${TAG}" \
+            --jq .body > /tmp/generated-notes.md
+          {
+            cat /tmp/tag-commit-msg.txt
+            printf '\n\n---\n\n'
+            cat /tmp/generated-notes.md
+          } > release-body.md
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: release-assets
+
+      - name: Create GitHub Release with binaries
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-body.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release-assets/*

@@ -17,3 +17,23 @@ permissions:
 jobs:
   test:
     uses: ./.github/workflows/test.yml
+
+  # Same Dockerfile as GHCR release; verify build only (no registry push).
+  docker-build-verify:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: false
+          tags: dnsfleet:ci-verify-${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH=
