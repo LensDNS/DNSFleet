@@ -259,7 +259,7 @@ export default function FleetPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex min-h-0 flex-1 flex-col space-y-4 overflow-auto">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Fleet</h1>
@@ -350,7 +350,7 @@ export default function FleetPage() {
                 {n.drifted ? (
                   <span className="text-amber-500">存在配置漂移</span>
                 ) : (
-                  <span className="text-muted-foreground">与期望一致（漂移标志）</span>
+                  <span className="text-muted-foreground">与期望一致 · 无漂移</span>
                 )}
                 <div className="flex flex-wrap gap-2">
                   <a

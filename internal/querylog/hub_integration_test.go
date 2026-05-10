@@ -274,11 +274,11 @@ func TestHub_upstream_error_401(t *testing.T) {
 	}
 }
 
-func TestHub_multi_page_cursor(t *testing.T) {
+func TestHub_single_page_per_tick_even_when_full_page(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	const pageLimit = 3 // mock first page len(data) must equal this (see handler below).
+	const pageLimit = 3 // mock returns len(data)==pageLimit with non-empty oldest (no second in-tick fetch).
 
 	db := openTestDB(t)
 	var qlCalls atomic.Int32
@@ -290,12 +290,7 @@ func TestHub_multi_page_cursor(t *testing.T) {
 		case "/control/querylog":
 			qlCalls.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			if r.URL.Query().Get("older_than") == "" {
-				// Full page (len(data)==pageLimit) + non-empty oldest → Hub fetches next page.
-				_, _ = w.Write([]byte(`{"oldest":"cursor-next","data":[{"p":1},{"p":2},{"p":3}]}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"oldest":"","data":[{"p":4}]}`))
+			_, _ = w.Write([]byte(`{"oldest":"cursor-next","data":[{"p":1},{"p":2},{"p":3}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -307,19 +302,34 @@ func TestHub_multi_page_cursor(t *testing.T) {
 	hub := NewHub(ctx, db, cfg)
 	conn := dialWS(t, startHubWSServer(t, hub), nil)
 
-	deadline := time.Now().Add(6 * time.Second)
-	ok := readWSUntil(t, conn, deadline, func(m map[string]any) bool {
-		return m["type"] == "log"
-	})
-	if !ok {
+	deadline := time.Now().Add(8 * time.Second)
+	sawLog := false
+	for time.Now().Before(deadline) && !sawLog {
+		_ = conn.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				continue
+			}
+			t.Fatalf("read: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("invalid json: %q", data)
+		}
+		if m["type"] == "log" {
+			sawLog = true
+			break
+		}
+	}
+	if !sawLog {
 		t.Fatal("expected at least one type=log frame")
 	}
-	// pollNode runs the second GET after the first page; the first log may be delivered before qlCalls reaches 2.
-	for time.Now().Before(deadline) && qlCalls.Load() < 2 {
-		time.Sleep(15 * time.Millisecond)
-	}
-	if n := qlCalls.Load(); n < 2 {
-		t.Fatalf("expected at least 2 querylog calls, got %d", n)
+	// Before the next poll tick (QueryLogPollInterval), only one GET /control/querylog should have run.
+	time.Sleep(50 * time.Millisecond)
+	if n := qlCalls.Load(); n != 1 {
+		t.Fatalf("expected exactly 1 GET /control/querylog on first poll tick, got %d", n)
 	}
 }
 

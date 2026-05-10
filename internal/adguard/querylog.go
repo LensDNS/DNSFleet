@@ -29,8 +29,8 @@ type QueryLogConfigResponse struct {
 //
 // OpenAPI semantics (verify when upgrading AdGH):
 //   - First page of the “latest” window: olderThan "" (omit older_than query key; do not send older_than=).
-//   - Next page within the same tail walk: set olderThan to the previous response’s Oldest (string cursor);
-//     offset/limit per OpenAPI (v0.1 Hub: repeats until partial page or hub per-tick page cap).
+//   - Next page (e.g. browser REST pagination): set olderThan to the previous response’s Oldest (string cursor);
+//     offset/limit per OpenAPI. The in-process querylog Hub uses a single tail GET per tick (no multi-page walk).
 //   - responseStatus: use "all" unless filtering; empty string is treated as "all".
 //   - search: optional; omitted from query when empty.
 func (c *Client) GetQueryLog(ctx context.Context, olderThan string, offset, limit int, responseStatus, search string) (*QueryLogResponse, error) {

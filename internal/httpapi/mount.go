@@ -20,6 +20,7 @@ func Mount(e *echo.Echo, deps Deps) {
 	g.GET("/nodes", r.listNodes)
 	g.POST("/nodes", r.postNode)
 	g.GET("/nodes/:id", r.getNode)
+	g.GET("/nodes/:id/querylog", r.getNodeQueryLog)
 	g.PATCH("/nodes/:id", r.patchNode)
 	g.DELETE("/nodes/:id", r.deleteNode)
 

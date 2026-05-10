@@ -26,8 +26,6 @@ const (
 	configEveryNPolls = 10
 	// configFetchErrBackoff: after GET querylog/config fails, skip refetch until this elapses (reduces hammering a sick upstream).
 	configFetchErrBackoff = 10 * time.Second
-	// maxQueryLogPagesPerTick: §4.C cursor walk — advance older_than=previous Oldest until a partial page or empty cursor; cap HTTP calls per node per tick.
-	maxQueryLogPagesPerTick = 16
 )
 
 type subscriber struct {
@@ -409,9 +407,8 @@ func (h *Hub) pollNode(node *models.Node) {
 		}
 	}
 
-	// Live tail (Step 4 §4.C): first GET omits older_than (latest window via GetQueryLog); then each
-	// full page uses previous response’s Oldest as older_than until partial page, empty cursor, or
-	// maxQueryLogPagesPerTick (bounded HTTP).
+	// Live tail (Step 4 §4.C): one GET per tick per node, omitting older_than (latest page only).
+	// Deep history pagination is done by the browser via GET /api/v1/nodes/:id/querylog.
 	h.nodeMu.Lock()
 	d := h.nodeTail[node.ID]
 	if d == nil {
@@ -421,19 +418,12 @@ func (h *Hub) pollNode(node *models.Node) {
 	h.nodeMu.Unlock()
 
 	limit := h.effectiveQueryLogPageLimit()
-	olderThan := ""
-	for range maxQueryLogPagesPerTick {
-		ql, err := cl.GetQueryLog(h.ctx, olderThan, 0, limit, "all", "")
-		if err != nil {
-			h.emitUpstreamError(node, err)
-			return
-		}
-		h.emitQueryLogData(node, d, ql.Data)
-		if len(ql.Data) < limit || ql.Oldest == "" {
-			return
-		}
-		olderThan = ql.Oldest
+	ql, err := cl.GetQueryLog(h.ctx, "", 0, limit, "all", "")
+	if err != nil {
+		h.emitUpstreamError(node, err)
+		return
 	}
+	h.emitQueryLogData(node, d, ql.Data)
 }
 
 func (h *Hub) emitQueryLogData(node *models.Node, d *boundedDedupe, data []json.RawMessage) {

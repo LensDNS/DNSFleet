@@ -28,17 +28,17 @@
 | `DNSFLEET_HTTP_ADDR` | `:8080` | HTTP 监听地址（Echo 监听该地址） |
 | `DNSFLEET_ADMIN_TOKEN` | （默认必填） | 单用户 Admin 共享密钥（`Authorization: Bearer` 或 `X-Admin-Token`）。**未**设置 `DNSFLEET_ADMIN_INSECURE_DISABLE=1` 且 token 为空（仅空白）时进程启动失败 |
 | `DNSFLEET_ADMIN_INSECURE_DISABLE` | 未设置 | 仅当值**精确为** `1` 时跳过 Admin 校验且**不要求** token 非空。**禁止在生产或公开镜像中启用** |
-| `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | 对 AdGuard Home 的 HTTP 并发上限；**漂移循环**与 **`POST /api/v1/sync`** **共用**同一 semaphore（任意时刻飞行请求数 ≤ 该值） |
+| `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | 对 AdGuard Home 的 HTTP 并发上限；**漂移循环**、**`POST /api/v1/sync`** 与 **`GET /api/v1/nodes/:id/querylog`**（Live Logs 历史分页代理）**共用**同一 semaphore（任意时刻经该槽位的飞行请求数 ≤ 该值） |
 | `DNSFLEET_SYNC_TOTAL_TIMEOUT` | `5m` | 单次 `POST /api/v1/sync` 的总超时（`time.ParseDuration` 语法；非法则启动失败） |
 | `DNSFLEET_DRIFT_INTERVAL` | `5m` | 漂移检测周期（语法同上）。进程启动后**先立即跑一轮**漂移，再按该间隔 ticker 重复 |
-| `DNSFLEET_QUERYLOG_MAX_CONCURRENT` | `8` | （Step 4）对 AdGH **`GET /control/querylog`** 的并发上限；**与** `DNSFLEET_SYNC_MAX_CONCURRENT` **独立**。峰值对 AdGH 的飞行请求约为两类上限之和（调度相关） |
-| `DNSFLEET_QUERYLOG_POLL_INTERVAL` | `2s` | （Step 4）每节点 querylog 轮询周期（Go duration；非法则启动失败） |
-| `DNSFLEET_QUERYLOG_PAGE_LIMIT` | `100` | （Step 4）单次 querylog 请求的 `limit`（非法则启动失败） |
+| `DNSFLEET_QUERYLOG_MAX_CONCURRENT` | `8` | （Step 4）**Hub** 对 AdGH **`GET /control/querylog`** 轮询的并发上限；**与** `DNSFLEET_SYNC_MAX_CONCURRENT` **独立**。浏览器经 **`GET /api/v1/nodes/:id/querylog`** 拉历史时走 **另一路**（`AdGHSem`）。峰值对 AdGH 的飞行请求约为 **两路槽位之和**（调度相关） |
+| `DNSFLEET_QUERYLOG_POLL_INTERVAL` | `2s` | （Step 4）每节点 Hub 轮询周期（Go duration；非法则启动失败） |
+| `DNSFLEET_QUERYLOG_PAGE_LIMIT` | `100` | （Step 4）Hub **单页尾包**每次 `GET /control/querylog` 的 `limit`（非法则启动失败）；与 REST 代理默认 `limit=20`、上限 100 **不必相同** |
 | `DNSFLEET_WS_MAX_FRAME_BYTES` | `65536` | （Step 4）发往浏览器的 WebSocket **文本帧**最大字节数（非法则启动失败） |
 
 业务 REST 路径前缀（v0.1 裁决）：**`/api/v1`**（健康检查仍为 **`GET /healthz`**，不经 Admin）。实时日志 WebSocket：**`GET /api/v1/ws/logs`**（Upgrade；鉴权见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。
 
-**实时查询日志（Live Logs）**：控制面按在线节点轮询 AdGH **`GET /control/querylog`**，经进程内 Hub **fan-out** 到各 WebSocket 客户端；**不是** AdGH 原生 push。观测延迟 **大致**为 **`DNSFLEET_QUERYLOG_POLL_INTERVAL` + 调度排队 + RTT**；节点数与轮询间隔越大，控制面与 AdGH 负载越高（与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 并发说明一致）。每个客户端有 **有界出站队列**；队列满时 **丢弃该客户端队列中最旧的一条待发消息**，并对该客户端发送 **`system` + `backpressure_drop`**（§4.G）。
+**实时查询日志（Live Logs）**：Hub 对在线节点 **每 tick 单页** `GET /control/querylog`（尾包），经 WebSocket **fan-out**；**深历史**由浏览器调用 **`GET /api/v1/nodes/:id/querylog`**（`older_than` 分页，与 Hub **独立**并发槽位）拉取；页面按 `entry.time` **合并排序**（新在上）。**不是** AdGH 原生 push。尾包延迟 **大致**为 **`DNSFLEET_QUERYLOG_POLL_INTERVAL` + 排队 + RTT**（与 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) 一致）。每个 WS 客户端有 **有界出站队列**；满则丢最旧积压并 **`system` + `backpressure_drop`**（§4.G）。
 
 ## Run
 

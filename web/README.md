@@ -49,7 +49,7 @@ If you change the Echo port, update **both** `DNSFLEET_HTTP_ADDR` / `DNSFLEET_BA
 
 - Default REST base: **`/api/v1`** (relative). `NEXT_PUBLIC_API_BASE` **unset or `''`** keeps that behavior (explicit empty string — do not rely on vague `if (!base)` checks).
 - **Never** set `NEXT_PUBLIC_API_BASE` to the backend origin while using rewrites — the browser would hit Echo directly and hit CORS.
-- **`apiFetch(path, …)`:** `path` is appended after that base. Use **`/nodes`** (or `nodes`), not **`/api/v1/nodes`**, or you get a doubled prefix (`/api/v1/api/v1/…`).
+- **`apiFetch(path, …)`:** `path` is appended after that base. Use **`/nodes`** (or `nodes`), not **`/api/v1/nodes`**, or you get a doubled prefix (`/api/v1/api/v1/…`). Query log proxy: **`/nodes/:id/querylog`**（`lib/node-querylog.ts`）。
 
 ## Admin token（Step 6 约定）
 
@@ -112,4 +112,6 @@ npm run lint     # eslint
 | `/login` | Admin token 登录（sessionStorage） |
 | `/fleet` | 节点列表、增删改、同步、终端抽屉 |
 | `/desired-state` | 全局期望 upstream / rewrite |
-| `/live-logs` | 同源 WebSocket 聚合日志 |
+| `/live-logs` | **REST 首屏 + 滚底** `GET /nodes/:id/querylog`（`older_than`）与 **WebSocket** 尾包合并；按时间新在上 |
+
+**Live Logs 页面**：对 **在线节点** 并行拉首屏 querylog，列表 **按 `entry.time` 降序**（最多 500 条，丢最旧）；滚到底继续 **`older_than`** 分页；多节点 **时间差过大** 时暂停某节点的深翻；**SHA-256**（`node_id` + `JSON.stringify(entry)`）去重 REST 与 WS。表格五列摘要；侧栏 **结构化完整响应**（`question` / `answer` RR / `rules` / `client_info` / `client_proto` 等）+ 底部 **原始 `entry` JSON**。**`rowTone` 行色**见 `lib/query-log-display.ts`；`npm test` 含摘要、`entryDetailSections` 与 `lib/live-logs-merge.ts`。

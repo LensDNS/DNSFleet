@@ -89,7 +89,7 @@ export default function DesiredStatePage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col space-y-4 overflow-auto">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Desired State</h1>
         <p className="text-muted-foreground text-sm">

@@ -18,4 +18,4 @@
 
 **约定**：`entry` 内尽量 **保留 AdGH 原始键名**（见 `docs/详细开发计划.md` Step 4 §4.E），便于与面板/OpenAPI 对齐；DNSFleet 不在此阶段发明平行字段名。
 
-**首次轮询 `older_than` / `offset` / `limit` 组合**：首屏 **不传** `older_than` 查询键（见 `internal/adguard` `GetQueryLog` 注释与 OpenAPI）；游标推进见 `internal/querylog` Hub。
+**Hub 尾包**：每轮询 tick、每在线节点 **仅一次** `GET /control/querylog`，**不传** `older_than`（最新一页，`limit` 见 `DNSFLEET_QUERYLOG_PAGE_LIMIT`）。**深历史**由浏览器调用控制面 **`GET /api/v1/nodes/:id/querylog`** 自行 `older_than` 分页（见 `api/DNSFLEET_HTTP_API.md`）。
