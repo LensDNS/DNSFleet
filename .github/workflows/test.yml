@@ -32,6 +32,13 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # go:embed all:dist requires at least one file before go vet/test compile internal/webui.
+      # Replaced by the real Next export after `npm run build` (see Makefile ensure-webui-dist).
+      - name: Prepare internal/webui/dist (placeholder for embed)
+        run: |
+          mkdir -p internal/webui/dist
+          printf '%s\n' '<!DOCTYPE html><html><head><meta charset="utf-8"><title>DNSFleet</title></head><body></body></html>' > internal/webui/dist/index.html
+
       - name: Go fmt (check only)
         run: |
           set -e
