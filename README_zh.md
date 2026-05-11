@@ -16,15 +16,15 @@
 
 ### Fleet
 
-![Fleet](assets/readme/demo-fleet.png)
+![Fleet](assets/readme/demo-fleet_zh.png)
 
 ### Desired State
 
-![Desired State](assets/readme/demo-desired-state.png)
+![Desired State](assets/readme/demo-desired-state_zh.png)
 
 ### Live Logs
 
-![DNSFleet Live Logs](assets/readme/demo-live-logs.png)
+![DNSFleet Live Logs](assets/readme/demo-live-logs_zh.png)
 
 ## 适用对象
 

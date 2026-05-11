@@ -18,15 +18,15 @@ The embedded web console supports **English and Chinese** UI copy; **English is 
 
 ### Fleet
 
-![Fleet](assets/readme/demo-fleet.png)
+![Fleet](assets/readme/demo-fleet_en.png)
 
 ### Desired State
 
-![Desired State](assets/readme/demo-desired-state.png)
+![Desired State](assets/readme/demo-desired-state_en.png)
 
 ### Live Logs
 
-![DNSFleet Live Logs](assets/readme/demo-live-logs.png)
+![DNSFleet Live Logs](assets/readme/demo-live-logs_en.png)
 
 ## Who it is for
 
