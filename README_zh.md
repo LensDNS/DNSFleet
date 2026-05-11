@@ -2,9 +2,25 @@
 
 **English:** [README.md](README.md)
 
+<p align="center"><img src="assets/readme/lensdns-logo.svg" alt="LensDNS" width="360"/></p>
+
 **自托管控制面**，用于从一处管理 **多台 AdGuard Home**：登记节点与凭据、下发期望配置、执行同步与漂移检查，并通过 **Live Logs**（WebSocket 尾包 + REST 历史分页）观测查询日志。解析仍在边缘的 **AdGuard Home**；DNSFleet 在控制面用 **SQLite** 保存状态，经 HTTP 与各节点通信。
 
 **能力边界（v0.1.x）：** 单一共享 **Admin** 凭据；**查询日志不落库**（仅实时观测）；无多租户复杂 RBAC。适用于 **Homelab** 与 **小规模边缘机群** 等单运维、节点规模可控的场景。
+
+## Demo
+
+### Fleet
+
+![Fleet](assets/readme/demo-fleet.png)
+
+### Desired State
+
+![Desired State](assets/readme/demo-desired-state.png)
+
+### Live Logs
+
+![DNSFleet Live Logs](assets/readme/demo-live-logs.png)
 
 ## 适用对象
 

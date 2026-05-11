@@ -2,9 +2,25 @@
 
 **Chinese version:** [README_zh.md](README_zh.md)
 
+<p align="center"><img src="assets/readme/lensdns-logo.svg" alt="LensDNS" width="360"/></p>
+
 A **self-hosted control plane** for operating a **fleet of AdGuard Home** nodes from one place: register nodes, push desired configuration, run sync and drift checks, and watch **Live Logs** (WebSocket tail plus REST-backed history). The data plane stays on **AdGuard Home** at the edge; DNSFleet holds control-plane state in **SQLite** and talks to each node over HTTP.
 
 **Scope (v0.1.x):** single shared **Admin** credential, **no durable storage of query logs** (real-time observation only), no multi-tenant RBAC. Intended for **homelab** and **small edge fleets** where one operator controls a bounded set of nodes.
+
+## Demo
+
+### Fleet
+
+![Fleet](assets/readme/demo-fleet.png)
+
+### Desired State
+
+![Desired State](assets/readme/demo-desired-state.png)
+
+### Live Logs
+
+![DNSFleet Live Logs](assets/readme/demo-live-logs.png)
 
 ## Who it is for
 
