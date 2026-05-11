@@ -13,10 +13,12 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   test:
     uses: ./.github/workflows/test.yml
+    secrets: inherit
 
   # Cross-compile from Linux (CGO_ENABLED=0; matches distroless-style static binary).
   build-release-binaries:

@@ -1,5 +1,9 @@
 # DNSFleet
 
+[![Code Coverage](https://img.shields.io/codecov/c/github/lensdns/dnsfleet/master.svg)](https://codecov.io/github/lensdns/dnsfleet?branch=master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/lensdns/dnsfleet)](https://goreportcard.com/report/lensdns/dnsfleet)
+[![Go Doc](https://godoc.org/github.com/lensdns/dnsfleet?status.svg)](https://godoc.org/github.com/lensdns/dnsfleet)
+
 **English:** [README.md](README.md)
 
 <p align="center"><img src="assets/readme/lensdns-logo.svg" alt="LensDNS" width="360"/></p>
@@ -117,7 +121,7 @@ go test ./cmd/... ./internal/...
 cd web && npm ci && npm run lint && npm run test && npm run build
 ```
 
-**GitHub Actions：** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 在 **Ubuntu / Windows / macOS** 跑 **Go + Web** 全量检查，并 **构建与发版相同的 Docker 镜像但不推送**。推送 **`v*`** 标签触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)：同样测试后，将 **多平台静态二进制** 与 **SHA256SUMS** 挂到 GitHub Release，并将镜像推送到 **GHCR**。
+**GitHub Actions：** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 在 **Ubuntu / Windows / macOS** 跑 **Go + Web** 全量检查；**Ubuntu** 任务会将 **Go 覆盖率** 上传至 [**Codecov**](https://codecov.io)（可选仓库密钥 **`CODECOV_TOKEN`**，或在 Codecov 侧启用 GitHub 应用 / OIDC），随后 **构建与发版相同的 Docker 镜像但不推送**。推送 **`v*`** 标签触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)：同样测试后，将 **多平台静态二进制** 与 **SHA256SUMS** 挂到 GitHub Release，并将镜像推送到 **GHCR**。
 
 产品设计类长篇文档**不随本仓库分发**；行为以**代码**及上文**公开**链接为准。
 

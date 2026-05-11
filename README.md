@@ -1,5 +1,9 @@
 # DNSFleet
 
+[![Code Coverage](https://img.shields.io/codecov/c/github/lensdns/dnsfleet/master.svg)](https://codecov.io/github/lensdns/dnsfleet?branch=master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/lensdns/dnsfleet)](https://goreportcard.com/report/lensdns/dnsfleet)
+[![Go Doc](https://godoc.org/github.com/lensdns/dnsfleet?status.svg)](https://godoc.org/github.com/lensdns/dnsfleet)
+
 **Chinese version:** [README_zh.md](README_zh.md)
 
 <p align="center"><img src="assets/readme/lensdns-logo.svg" alt="LensDNS" width="360"/></p>
@@ -117,7 +121,7 @@ go test ./cmd/... ./internal/...
 cd web && npm ci && npm run lint && npm run test && npm run build
 ```
 
-**GitHub Actions:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the **Go + web** matrix on **Ubuntu, Windows, and macOS**, then builds the **same Docker image as release** with **no registry push**. Pushing a tag matching **`v*`** runs [`.github/workflows/release.yml`](.github/workflows/release.yml): same tests, **multi-platform static binaries** and **SHA256SUMS** attached to the GitHub Release, and the image pushed to **GHCR**.
+**GitHub Actions:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the **Go + web** matrix on **Ubuntu, Windows, and macOS**, uploads **Go coverage** from the Ubuntu job to [**Codecov**](https://codecov.io) (optional repo secret **`CODECOV_TOKEN`**, or enable Codecov’s GitHub app / OIDC on your account), then builds the **same Docker image as release** with **no registry push**. Pushing a tag matching **`v*`** runs [`.github/workflows/release.yml`](.github/workflows/release.yml): same tests, **multi-platform static binaries** and **SHA256SUMS** attached to the GitHub Release, and the image pushed to **GHCR**.
 
 Design documents and maintainer-only notes are **not shipped** with this repository; behavior is defined by **code** and the **public** files linked above.
 

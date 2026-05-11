@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # Codecov OIDC when CODECOV_TOKEN is unset (public repos)
 
 jobs:
   test:
@@ -68,4 +69,22 @@ jobs:
           cp -r web/out/. internal/webui/dist/
 
       - name: Go test
-        run: go test ./cmd/... ./internal/...
+        run: |
+          set -e
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+          else
+            go test ./cmd/... ./internal/...
+          fi
+
+      # One upload per workflow run (Linux job only). Optional CODECOV_TOKEN; OIDC works for many public repos.
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
+          files: coverage.out
+          flags: go
+          fail_ci_if_error: false
+          verbose: true

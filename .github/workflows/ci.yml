@@ -13,10 +13,12 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   test:
     uses: ./.github/workflows/test.yml
+    secrets: inherit
 
   # Same Dockerfile as GHCR release; verify build only (no registry push).
   docker-build-verify:
