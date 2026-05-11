@@ -41,6 +41,8 @@ import {
 } from "@/lib/live-logs-merge";
 import { fetchNodeQueryLog, fetchNodes } from "@/lib/node-querylog";
 import { buildLogsWebSocketUrl } from "@/lib/ws-logs-url";
+import { useLocale } from "@/lib/i18n/locale-context";
+import { interpolate } from "@/lib/i18n/resolve-message";
 import { cn } from "@/lib/utils";
 
 const MAX_SYSTEM = 100;
@@ -105,6 +107,7 @@ async function buildLogRow(
 }
 
 export default function LiveLogsPage() {
+  const { t, locale } = useLocale();
   const [logRows, setLogRows] = useState<LogRow[]>([]);
   const [systemLines, setSystemLines] = useState<SystemLine[]>([]);
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed">("idle");
@@ -168,8 +171,8 @@ export default function LiveLogsPage() {
   }, [detail]);
 
   const detailSections = useMemo(
-    () => (detail ? entryDetailSections(detail.entry) : []),
-    [detail],
+    () => (detail ? entryDetailSections(detail.entry, locale) : []),
+    [detail, locale],
   );
 
   const loadOlderPage = useCallback(async () => {
@@ -243,7 +246,7 @@ export default function LiveLogsPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg !== "AbortError" && !msg.includes("aborted")) {
-        toast.warning(`加载更早日志失败：${msg}`);
+        toast.warning(`${t("liveLogs.toast.loadOlderFailed")} ${msg}`);
       }
     } finally {
       globalOlderBusy.current = false;
@@ -252,7 +255,7 @@ export default function LiveLogsPage() {
       }
       olderInFlight.current.delete(pickedNodeId);
     }
-  }, []);
+  }, [t]);
 
   const onTableScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -279,10 +282,10 @@ export default function LiveLogsPage() {
     });
     if (exhausted.length === 0) return null;
     if (exhausted.length === ids.length) {
-      return "已无更老记录（当前在线节点在查询日志中的分页均已耗尽）。";
+      return t("liveLogs.history.allExhausted");
     }
-    return "部分节点已无更老记录；其余节点在列表滚底时仍可继续加载更旧页。";
-  }, [nodeTails]);
+    return t("liveLogs.history.partialExhausted");
+  }, [nodeTails, t]);
 
   useEffect(() => {
     if (logRows.length !== prevLogLen.current) {
@@ -358,7 +361,7 @@ export default function LiveLogsPage() {
             const err = r.reason;
             if (err instanceof Error && err.message.includes("aborted")) continue;
             const msg = err instanceof Error ? err.message : String(err);
-            toast.warning(`首屏 querylog：${msg}`);
+            toast.warning(`${t("liveLogs.toast.firstPageWarn")} ${msg}`);
             continue;
           }
           const { node, ql } = r.value;
@@ -380,7 +383,7 @@ export default function LiveLogsPage() {
       } catch (e) {
         if (gen !== fetchGen.current) return;
         const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.includes("aborted")) toast.error(`加载节点列表失败：${msg}`);
+        if (!msg.includes("aborted")) toast.error(`${t("liveLogs.toast.nodesLoadFailed")} ${msg}`);
       } finally {
         if (gen === fetchGen.current) setInitialLoad("ready");
       }
@@ -389,7 +392,7 @@ export default function LiveLogsPage() {
     return () => {
       ac.abort();
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const built = buildLogsWebSocketUrl();
@@ -397,7 +400,7 @@ export default function LiveLogsPage() {
       if (!warnedNoUrl.current && !isSkipAdminAuth()) {
         warnedNoUrl.current = true;
         void Promise.resolve().then(() => {
-          toast.error("无可用 Admin token，无法建立日志 WebSocket");
+          toast.error(t("liveLogs.toast.noWsToken"));
           setStatus("idle");
         });
       }
@@ -540,27 +543,27 @@ export default function LiveLogsPage() {
         ws.close();
       }
     };
-  }, []);
+  }, [t]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Live Logs</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("liveLogs.title")}</h1>
         <p className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
-          <span className="text-muted-foreground">
-            风险提示：实时日志经同源 WebSocket；有 Admin 时 token 可能出现在 Query 中（勿分享链接、勿在生产依赖裸
-            Query）。自动重连采用指数退避（上限 30s）。首屏与滚底经 REST 拉取历史，WS 推送增量；列表按时间新在上。
-          </span>
+          <span className="text-muted-foreground">{t("liveLogs.riskNotice")}</span>
         </p>
         <p className="text-muted-foreground mt-1 text-xs">
-          连接状态：{status}（合并最多 {MAX_MERGED_LOG_LINES} 条）
+          {interpolate(t("liveLogs.connectionStatus"), {
+            status,
+            max: MAX_MERGED_LOG_LINES,
+          })}
         </p>
       </div>
 
-      <section aria-label="系统消息" className="shrink-0 rounded-md border border-border bg-muted/20">
+      <section aria-label={t("liveLogs.systemMessages")} className="shrink-0 rounded-md border border-border bg-muted/20">
         <details open className="group">
           <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium marker:hidden [&::-webkit-details-marker]:hidden">
-            <span className="text-muted-foreground">系统消息</span>{" "}
+            <span className="text-muted-foreground">{t("liveLogs.systemMessages")}</span>{" "}
             <Badge variant="secondary" className="ml-1 font-mono text-[10px]">
               {systemLines.length}
             </Badge>
@@ -568,7 +571,7 @@ export default function LiveLogsPage() {
           <ScrollArea className="max-h-36 px-2">
             <ul className="space-y-1 pb-2 font-mono text-[11px] text-muted-foreground">
               {systemLines.length === 0 ? (
-                <li className="px-1 py-1 text-muted-foreground">（暂无）</li>
+                <li className="px-1 py-1 text-muted-foreground">{t("liveLogs.systemEmpty")}</li>
               ) : (
                 systemLines.map((line) => (
                   <li key={line.key} className="rounded bg-background/80 px-2 py-1">
@@ -594,22 +597,22 @@ export default function LiveLogsPage() {
             <thead>
               <tr className="sticky top-0 z-10 border-b border-border bg-muted/80 shadow-sm backdrop-blur-sm">
                 <th scope="col" className="whitespace-nowrap px-2 py-2 font-medium text-muted-foreground">
-                  时间
+                  {t("liveLogs.col.time")}
                 </th>
                 <th scope="col" className="whitespace-nowrap px-2 py-2 font-medium text-muted-foreground">
-                  节点
+                  {t("liveLogs.col.node")}
                 </th>
                 <th scope="col" className="min-w-[140px] px-2 py-2 font-medium text-muted-foreground">
-                  请求
+                  {t("liveLogs.col.request")}
                 </th>
                 <th scope="col" className="min-w-[160px] px-2 py-2 font-medium text-muted-foreground">
-                  响应
+                  {t("liveLogs.col.response")}
                 </th>
                 <th scope="col" className="min-w-[120px] px-2 py-2 font-medium text-muted-foreground">
-                  客户端
+                  {t("liveLogs.col.client")}
                 </th>
                 <th scope="col" className="w-10 px-1 py-2 text-center font-medium text-muted-foreground">
-                  <span className="sr-only">响应细节</span>
+                  <span className="sr-only">{t("liveLogs.col.detailsSr")}</span>
                 </th>
               </tr>
             </thead>
@@ -617,19 +620,19 @@ export default function LiveLogsPage() {
               {initialLoad === "loading" && logRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
-                    正在加载首屏日志…
+                    {t("liveLogs.loadingFirst")}
                   </td>
                 </tr>
               ) : logRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
-                    暂无在线节点或无查询日志。连接 WebSocket 后可接收实时尾包。
+                    {t("liveLogs.empty")}
                   </td>
                 </tr>
               ) : (
                 <>
                 {logRows.map((row) => {
-                  const timeStr = formatDisplayTime(row.entry.time, row.receivedAt);
+                  const timeStr = formatDisplayTime(row.entry.time, row.receivedAt, locale);
                   const summaryLine = formatResponseSummaryLine(row.normalized);
                   return (
                     <tr
@@ -640,7 +643,7 @@ export default function LiveLogsPage() {
                         resultKindBorderClass(row.resultKind),
                         slowQueryRowAccentClass(row.slowQuery),
                       )}
-                      aria-label={`${resultKindAriaLabel(row.resultKind)}${row.slowQuery ? "；慢查询" : ""}`}
+                      aria-label={`${resultKindAriaLabel(row.resultKind, locale)}${row.slowQuery ? t("liveLogs.rowAriaSlow") : ""}`}
                     >
                       <td className="whitespace-nowrap px-2 py-1.5 align-top font-mono text-[11px] text-muted-foreground">
                         {timeStr}
@@ -666,18 +669,18 @@ export default function LiveLogsPage() {
                             <Badge
                               variant="outline"
                               className="max-w-full truncate border-border/80 font-normal text-[10px] text-foreground"
-                              title={resultKindAriaLabel(row.resultKind)}
+                              title={resultKindAriaLabel(row.resultKind, locale)}
                             >
-                              {resultKindShortLabel(row.resultKind)}
+                              {resultKindShortLabel(row.resultKind, locale)}
                             </Badge>
                           ) : null}
                           {row.slowQuery ? (
                             <Badge
                               variant="outline"
                               className="border-amber-500/40 font-normal text-[10px] text-foreground"
-                              title="耗时超过阈值（见 NEXT_PUBLIC_DNSFLEET_SLOW_QUERY_MS，默认 100 ms）"
+                              title={t("liveLogs.slowQueryTitle")}
                             >
-                              慢查询
+                              {t("liveLogs.slowQuery")}
                             </Badge>
                           ) : null}
                         </div>
@@ -706,7 +709,7 @@ export default function LiveLogsPage() {
                           variant="ghost"
                           size="icon-xs"
                           className="text-muted-foreground hover:text-foreground"
-                          aria-label="响应细节与原始 JSON"
+                          aria-label={t("liveLogs.rowDetailsAria")}
                           onClick={() => setDetail(snapshotLogRow(row))}
                         >
                           <EllipsisVertical className="size-4" />
@@ -742,30 +745,30 @@ export default function LiveLogsPage() {
           {detail ? (
             <>
               <SheetHeader className="shrink-0 border-b border-border pb-3">
-                <SheetTitle>响应细节</SheetTitle>
+                <SheetTitle>{t("liveLogs.sheet.title")}</SheetTitle>
                 <SheetDescription className="font-mono text-[11px]">
                   {detail.normalized.requestLine} · {detail.nodeName}
                 </SheetDescription>
               </SheetHeader>
               <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3 text-xs">
                 <div>
-                  <div className="text-muted-foreground">状态 / 响应代码</div>
+                  <div className="text-muted-foreground">{t("liveLogs.sheet.status")}</div>
                   <div className="font-mono text-foreground">{detail.normalized.status}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">上游 DNS</div>
+                  <div className="text-muted-foreground">{t("liveLogs.sheet.upstreamDns")}</div>
                   <div className="break-all font-mono text-foreground">{detail.normalized.upstream}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">耗时</div>
+                  <div className="text-muted-foreground">{t("liveLogs.sheet.elapsed")}</div>
                   <div className="font-mono text-foreground">{detail.normalized.elapsedMsLabel}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">原因</div>
+                  <div className="text-muted-foreground">{t("liveLogs.sheet.reason")}</div>
                   <div className="break-words text-foreground">{detail.normalized.reason}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">客户端（摘要）</div>
+                  <div className="text-muted-foreground">{t("liveLogs.sheet.clientSummary")}</div>
                   <div className="break-words text-sm font-medium text-foreground">{detail.normalized.clientPrimary}</div>
                   {detail.normalized.clientSecondary ? (
                     <div className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">
@@ -782,7 +785,7 @@ export default function LiveLogsPage() {
                   </div>
                 ))}
                 <div className="mt-auto border-t border-border pt-3">
-                  <div className="text-sm font-medium text-foreground">原始 entry（JSON）</div>
+                  <div className="text-sm font-medium text-foreground">{t("liveLogs.sheet.rawJson")}</div>
                   <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 p-2 font-mono text-[10px] text-foreground">
                     {detailJson}
                   </pre>

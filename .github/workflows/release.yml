@@ -2,7 +2,7 @@
 # - Full test matrix (reusable test.yml)
 # - Cross-compiled static binaries → GitHub Release assets (linux/windows/darwin, amd64/arm64)
 # - Docker image → GHCR
-# - GitHub Release page (generated notes + attached binaries + SHA256SUMS)
+# - GitHub Release page: preamble = annotated tag message if present, else tagged commit message; then generated notes + assets + SHA256SUMS
 name: Release
 
 on:
@@ -127,19 +127,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Compose release body (tagged commit message, then auto-generated notes)
+      # Prefer annotated tag message (`git tag -a … -m "…"`); lightweight tags fall back to the tagged commit subject+body.
+      - name: Compose release body (annotated tag message, then auto-generated notes)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          git log -1 --format=%B HEAD > /tmp/tag-commit-msg.txt
+          tag_msg="$(git tag -l "$TAG" --format='%(contents)' || true)"
+          if [ -n "${tag_msg//[$' \t\r\n']/}" ]; then
+            printf '%s\n' "$tag_msg" > /tmp/release-preamble.md
+          else
+            git log -1 --format=%B HEAD > /tmp/release-preamble.md
+          fi
           gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
             --method POST \
             -f "tag_name=${TAG}" \
             --jq .body > /tmp/generated-notes.md
           {
-            cat /tmp/tag-commit-msg.txt
+            cat /tmp/release-preamble.md
             printf '\n\n---\n\n'
             cat /tmp/generated-notes.md
           } > release-body.md

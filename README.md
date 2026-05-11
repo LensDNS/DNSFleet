@@ -12,6 +12,8 @@ A **self-hosted control plane** for operating a **fleet of AdGuard Home** nodes 
 
 **Scope (v0.1.x):** single shared **Admin** credential, **no durable storage of query logs** (real-time observation only), no multi-tenant RBAC. Intended for **homelab** and **small edge fleets** where one operator controls a bounded set of nodes.
 
+The embedded web console supports **English and Chinese** UI copy; **English is the default**, and you can switch language from the dashboard header (persisted in the browser). REST/WebSocket API messages stay as returned by the server.
+
 ## Demo
 
 ### Fleet

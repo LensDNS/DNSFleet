@@ -13,8 +13,12 @@
  * **Slow query (`isSlowQuery`)** uses `entry.elapsedMs` as reported by AdGuard Home
  * (resolver-side processing), not browser-to-control-plane RTT. Default threshold 100 ms
  * via `NEXT_PUBLIC_DNSFLEET_SLOW_QUERY_MS`. High upstream latency can surface many
- * “慢查询” badges—raise the threshold or fix DNS rather than treating it as network RTT.
+ * slow-query badges—raise the threshold or fix DNS rather than treating it as network RTT.
  */
+
+import type { AppLocale } from "@/lib/i18n/resolve-message";
+import type { LocaleKey } from "@/lib/i18n/locales/en";
+import { intlLocaleTag, resolveMessage } from "@/lib/i18n/resolve-message";
 
 export type ResultKind =
   | "blocked"
@@ -263,42 +267,32 @@ export function inferRowTone(entry: Record<string, unknown>): RowTone {
   return inferResultKind(entry);
 }
 
-export function resultKindAriaLabel(kind: ResultKind): string {
-  switch (kind) {
-    case "blocked":
-      return "拦截或策略拒绝";
-    case "servfail":
-      return "上游或协议失败";
-    case "timeout":
-      return "解析超时或上游超时";
-    case "rewrite":
-      return "DNS 重写";
-    case "cache_hit":
-      return "缓存命中";
-    case "allowed":
-      return "规则放行";
-    default:
-      return "正常解析";
-  }
+const RESULT_KIND_ARIA: Record<ResultKind, LocaleKey> = {
+  blocked: "liveLogs.resultKind.blocked.aria",
+  servfail: "liveLogs.resultKind.servfail.aria",
+  timeout: "liveLogs.resultKind.timeout.aria",
+  rewrite: "liveLogs.resultKind.rewrite.aria",
+  cache_hit: "liveLogs.resultKind.cache_hit.aria",
+  allowed: "liveLogs.resultKind.allowed.aria",
+  neutral: "liveLogs.resultKind.neutral.aria",
+};
+
+const RESULT_KIND_SHORT: Record<ResultKind, LocaleKey> = {
+  blocked: "liveLogs.resultKind.blocked.short",
+  servfail: "liveLogs.resultKind.servfail.short",
+  timeout: "liveLogs.resultKind.timeout.short",
+  rewrite: "liveLogs.resultKind.rewrite.short",
+  cache_hit: "liveLogs.resultKind.cache_hit.short",
+  allowed: "liveLogs.resultKind.allowed.short",
+  neutral: "liveLogs.resultKind.neutral.short",
+};
+
+export function resultKindAriaLabel(kind: ResultKind, locale: AppLocale): string {
+  return resolveMessage(RESULT_KIND_ARIA[kind], locale);
 }
 
-export function resultKindShortLabel(kind: ResultKind): string {
-  switch (kind) {
-    case "blocked":
-      return "拦截";
-    case "servfail":
-      return "SERVFAIL";
-    case "timeout":
-      return "超时";
-    case "rewrite":
-      return "重写";
-    case "cache_hit":
-      return "缓存";
-    case "allowed":
-      return "放行";
-    default:
-      return "正常";
-  }
+export function resultKindShortLabel(kind: ResultKind, locale: AppLocale): string {
+  return resolveMessage(RESULT_KIND_SHORT[kind], locale);
 }
 
 /** Row background (low saturation; works in light + dark). */
@@ -415,16 +409,22 @@ export function entryTimeToMs(entryTime: unknown, fallbackMs: number): number {
 /**
  * Prefer `entry.time` (ISO or unix); else format `receivedAtMs` (local receipt time).
  */
-export function formatDisplayTime(entryTime: unknown, receivedAtMs: number): string {
+export const DISPLAY_TIME_OPTS: Intl.DateTimeFormatOptions = {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+};
+
+export function formatDisplayTime(
+  entryTime: unknown,
+  receivedAtMs: number,
+  locale: AppLocale,
+): string {
   const ms = entryTimeToMs(entryTime, receivedAtMs);
-  return new Date(ms).toLocaleString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-  });
+  return new Date(ms).toLocaleString(intlLocaleTag(locale), DISPLAY_TIME_OPTS);
 }
 
 /** Human-readable sections for detail panel (full response, not table summary). */
@@ -439,18 +439,25 @@ function jsonPretty(v: unknown): string {
 }
 
 /** Structured blocks for one query-log entry (AdGH-shaped); no truncation. */
-export function entryDetailSections(entry: Record<string, unknown>): EntryDetailSection[] {
+export function entryDetailSections(
+  entry: Record<string, unknown>,
+  locale: AppLocale,
+): EntryDetailSection[] {
   const out: EntryDetailSection[] = [];
+  const dt = (key: LocaleKey) => resolveMessage(key, locale);
 
   const q = entry.question;
   if (q !== undefined && q !== null) {
-    out.push({ title: "question", body: typeof q === "string" ? q : jsonPretty(q) });
+    out.push({
+      title: dt("liveLogs.detail.question"),
+      body: typeof q === "string" ? q : jsonPretty(q),
+    });
   }
 
   const a = entry.answer;
   if (a !== undefined && a !== null) {
     if (typeof a === "string") {
-      out.push({ title: "answer", body: a });
+      out.push({ title: dt("liveLogs.detail.answer"), body: a });
     } else if (Array.isArray(a)) {
       const lines: string[] = [];
       for (let i = 0; i < a.length; i++) {
@@ -465,32 +472,48 @@ export function entryDetailSections(entry: Record<string, unknown>): EntryDetail
           lines.push(`${i + 1}. ${jsonPretty(rr)}`);
         }
       }
-      out.push({ title: "answer (RR)", body: lines.length ? lines.join("\n") : "—" });
+      out.push({
+        title: dt("liveLogs.detail.answerRR"),
+        body: lines.length ? lines.join("\n") : "—",
+      });
     } else {
-      out.push({ title: "answer", body: jsonPretty(a) });
+      out.push({ title: dt("liveLogs.detail.answer"), body: jsonPretty(a) });
     }
   }
 
   const extraBits: string[] = [];
   if (entry.cached === true) extraBits.push("cached: true");
-  if (entry.answer_dnssec !== undefined) extraBits.push(`answer_dnssec: ${jsonPretty(entry.answer_dnssec)}`);
+  if (entry.answer_dnssec !== undefined)
+    extraBits.push(`answer_dnssec: ${jsonPretty(entry.answer_dnssec)}`);
   if (extraBits.length) {
-    out.push({ title: "answer 元数据", body: extraBits.join("\n") });
+    out.push({
+      title: dt("liveLogs.detail.answerMeta"),
+      body: extraBits.join("\n"),
+    });
   }
 
   const rules = entry.rules ?? entry.rule;
   if (rules !== undefined && rules !== null && rules !== "") {
-    out.push({ title: "rules", body: Array.isArray(rules) ? jsonPretty(rules) : String(rules) });
+    out.push({
+      title: dt("liveLogs.detail.rules"),
+      body: Array.isArray(rules) ? jsonPretty(rules) : String(rules),
+    });
   }
 
   const ci = entry.client_info;
   if (ci !== undefined && ci !== null && typeof ci === "object") {
-    out.push({ title: "client_info", body: jsonPretty(ci) });
+    out.push({
+      title: dt("liveLogs.detail.clientInfo"),
+      body: jsonPretty(ci),
+    });
   }
 
   const cp = entry.client_proto;
   if (cp !== undefined && cp !== null && String(cp).trim() !== "") {
-    out.push({ title: "client_proto", body: String(cp) });
+    out.push({
+      title: dt("liveLogs.detail.clientProto"),
+      body: String(cp),
+    });
   }
 
   return out;

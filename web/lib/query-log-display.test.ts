@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DISPLAY_TIME_OPTS,
   entryDetailSections,
   entryTimeToMs,
   extractClientPresentation,
@@ -12,6 +13,8 @@ import {
   normalizeEntry,
   parseElapsedMs,
 } from "./query-log-display";
+import { en } from "./i18n/locales/en";
+import { intlLocaleTag } from "./i18n/resolve-message";
 
 describe("normalizeEntry", () => {
   it("keeps status separate from answer summary", () => {
@@ -80,32 +83,36 @@ describe("entryTimeToMs", () => {
 
 describe("entryDetailSections", () => {
   it("lists answer RRs without truncation", () => {
-    const secs = entryDetailSections({
-      question: { name: "x.example.com", type: "A" },
-      answer: [
-        { type: "A", value: "10.0.0.1", ttl: 60 },
-        { type: "AAAA", value: "::1" },
-      ],
-    });
-    const ans = secs.find((s) => s.title === "answer (RR)");
+    const secs = entryDetailSections(
+      {
+        question: { name: "x.example.com", type: "A" },
+        answer: [
+          { type: "A", value: "10.0.0.1", ttl: 60 },
+          { type: "AAAA", value: "::1" },
+        ],
+      },
+      "en",
+    );
+    const ans = secs.find((s) => s.title === en["liveLogs.detail.answerRR"]);
     expect(ans?.body).toMatch(/A\s+10\.0\.0\.1/);
     expect(ans?.body).toContain("AAAA");
+  });
+
+  it("uses localized answer metadata title", () => {
+    const secs = entryDetailSections({ cached: true }, "en");
+    const meta = secs.find((s) => s.title === en["liveLogs.detail.answerMeta"]);
+    expect(meta?.body).toContain("cached: true");
   });
 });
 
 describe("formatDisplayTime", () => {
   it("falls back to receivedAt when entry time string is invalid", () => {
     const t = 1_700_000_000_000;
-    const s = formatDisplayTime("not-a-date", t);
-    expect(s).toBe(
-      new Date(t).toLocaleString("zh-CN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        year: "numeric",
-        month: "numeric",
-        day: "numeric",
-      }),
+    expect(formatDisplayTime("not-a-date", t, "zh")).toBe(
+      new Date(t).toLocaleString(intlLocaleTag("zh"), DISPLAY_TIME_OPTS),
+    );
+    expect(formatDisplayTime("not-a-date", t, "en")).toBe(
+      new Date(t).toLocaleString(intlLocaleTag("en"), DISPLAY_TIME_OPTS),
     );
   });
 });

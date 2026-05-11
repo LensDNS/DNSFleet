@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getApiBase, readErrorMessage } from "@/lib/api";
 import { isSkipAdminAuth, setSessionStoredToken } from "@/lib/auth-token";
+import { useLocale } from "@/lib/i18n/locale-context";
 
 async function probeAdminToken(token: string): Promise<void> {
   if (isSkipAdminAuth()) return;
@@ -25,6 +26,7 @@ async function probeAdminToken(token: string): Promise<void> {
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t, locale, setLocale } = useLocale();
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -32,7 +34,7 @@ export default function LoginPage() {
     e.preventDefault();
     const trimmed = token.trim();
     if (!trimmed && !isSkipAdminAuth()) {
-      toast.error("请输入 Admin token");
+      toast.error(t("login.error.tokenRequired"));
       return;
     }
     setBusy(true);
@@ -45,7 +47,7 @@ export default function LoginPage() {
       }
       router.replace("/fleet");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "校验失败");
+      toast.error(err instanceof Error ? err.message : t("login.error.verifyFailed"));
     } finally {
       setBusy(false);
     }
@@ -54,17 +56,39 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-full flex-col items-center justify-center gap-6 p-6">
       <div className="w-full max-w-sm space-y-2 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">DNSFleet</h1>
-        <p className="text-muted-foreground text-sm">输入与控制面一致的 Admin token</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("common.appName")}</h1>
+        <p className="text-muted-foreground text-sm">{t("login.subtitle")}</p>
+      </div>
+
+      <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+        <Button
+          type="button"
+          variant={locale === "en" ? "secondary" : "ghost"}
+          size="xs"
+          className="h-7 px-2 text-xs"
+          onClick={() => setLocale("en")}
+        >
+          EN
+        </Button>
+        <Button
+          type="button"
+          variant={locale === "zh" ? "secondary" : "ghost"}
+          size="xs"
+          className="h-7 px-2 text-xs"
+          onClick={() => setLocale("zh")}
+        >
+          中文
+        </Button>
       </div>
 
       {isSkipAdminAuth() ? (
         <div className="bg-muted text-muted-foreground w-full max-w-sm rounded-lg border p-4 text-sm">
-          已启用 <code className="text-foreground">NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH=1</code>
-          ，与后端免 Admin 模式成对使用时可不填 token 直接进入面板。
+          {t("login.skipAuthIntro")}{" "}
+          <code className="text-foreground">NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH=1</code>
+          {t("login.skipAuthDetail")}
           <div className="mt-3">
             <Button type="button" onClick={() => router.push("/fleet")}>
-              进入面板
+              {t("login.enterDashboard")}
             </Button>
           </div>
         </div>
@@ -72,18 +96,18 @@ export default function LoginPage() {
 
       <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="admin-token">Admin token</Label>
+          <Label htmlFor="admin-token">{t("login.adminTokenLabel")}</Label>
           <Input
             id="admin-token"
             type="password"
             autoComplete="off"
-            placeholder="Bearer 值（与 DNSFLEET_ADMIN_TOKEN 一致）"
+            placeholder={t("login.placeholderToken")}
             value={token}
             onChange={(e) => setToken(e.target.value)}
           />
         </div>
         <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "校验中…" : "登录"}
+          {busy ? t("login.verifying") : t("login.submit")}
         </Button>
       </form>
     </div>

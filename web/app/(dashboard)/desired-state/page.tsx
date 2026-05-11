@@ -13,8 +13,10 @@ import {
   shouldSkipDuplicate401Toast,
 } from "@/lib/api";
 import type { GlobalConfigDTO } from "@/lib/dnsfleet-types";
+import { useLocale } from "@/lib/i18n/locale-context";
 
 export default function DesiredStatePage() {
+  const { t } = useLocale();
   const [upstream, setUpstream] = useState("");
   const [rewriteText, setRewriteText] = useState("[]");
   const [loading, setLoading] = useState(true);
@@ -34,7 +36,7 @@ export default function DesiredStatePage() {
       }
       const data = await readJsonBody<GlobalConfigDTO>(res);
       if (!data || typeof data !== "object") {
-        toast.error("配置响应格式无效");
+        toast.error(t("desiredState.toast.invalidResponse"));
         setUpstream("");
         setRewriteText("[]");
         return;
@@ -43,13 +45,13 @@ export default function DesiredStatePage() {
       setUpstream(typeof data.upstream === "string" ? data.upstream : "");
       setRewriteText(JSON.stringify(rw, null, 2));
     } catch {
-      toast.error("加载配置失败");
+      toast.error(t("desiredState.toast.loadFailed"));
       setUpstream("");
       setRewriteText("[]");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void Promise.resolve().then(() => load());
@@ -61,12 +63,12 @@ export default function DesiredStatePage() {
     try {
       const parsed = JSON.parse(rewriteText) as unknown;
       if (!Array.isArray(parsed)) {
-        toast.error("rewrite 须为 JSON 数组");
+        toast.error(t("desiredState.toast.rewriteMustBeArray"));
         return;
       }
       rewrite = parsed;
     } catch {
-      toast.error("rewrite JSON 解析失败");
+      toast.error(t("desiredState.toast.rewriteJsonInvalid"));
       return;
     }
     setSaving(true);
@@ -81,7 +83,7 @@ export default function DesiredStatePage() {
         }
         return;
       }
-      toast.success("已保存全局期望");
+      toast.success(t("desiredState.toast.saved"));
       await load();
     } finally {
       setSaving(false);
@@ -91,15 +93,16 @@ export default function DesiredStatePage() {
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col space-y-4 overflow-auto">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Desired State</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("desiredState.title")}</h1>
         <p className="text-muted-foreground text-sm">
-          对应 <code className="rounded bg-muted px-1">GET/PUT /api/v1/config/global</code>
+          {t("desiredState.mapsTo")}{" "}
+          <code className="rounded bg-muted px-1">GET/PUT /api/v1/config/global</code>
         </p>
       </div>
 
       <form onSubmit={(e) => void onSave(e)} className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="upstream">upstream（多行文本）</Label>
+          <Label htmlFor="upstream">{t("desiredState.labelUpstream")}</Label>
           <Textarea
             id="upstream"
             value={upstream}
@@ -107,11 +110,11 @@ export default function DesiredStatePage() {
             rows={8}
             className="font-mono text-sm"
             disabled={loading}
-            placeholder="例如一行一个上游地址"
+            placeholder={t("desiredState.placeholderUpstream")}
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="rewrite">rewrite（JSON 数组）</Label>
+          <Label htmlFor="rewrite">{t("desiredState.labelRewrite")}</Label>
           <Textarea
             id="rewrite"
             value={rewriteText}
@@ -123,7 +126,7 @@ export default function DesiredStatePage() {
         </div>
         <div className="flex gap-2">
           <Button type="submit" disabled={loading || saving}>
-            {saving ? "保存中…" : "保存"}
+            {saving ? t("common.saving") : t("common.save")}
           </Button>
           <Button
             type="button"
@@ -131,7 +134,7 @@ export default function DesiredStatePage() {
             onClick={() => void load()}
             disabled={loading}
           >
-            重新加载
+            {t("desiredState.reload")}
           </Button>
         </div>
       </form>

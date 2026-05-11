@@ -38,6 +38,8 @@ import { SyncTerminalDrawer } from "@/components/sync-terminal-drawer";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { apiFetch, readErrorMessage, readJsonBody, shouldSkipDuplicate401Toast } from "@/lib/api";
 import type { AuthKind, NodeDTO, SyncResponseDTO } from "@/lib/dnsfleet-types";
+import { useLocale } from "@/lib/i18n/locale-context";
+import { interpolate } from "@/lib/i18n/resolve-message";
 import { mapLimit, probeNode } from "@/lib/nodes";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +54,7 @@ function formatSyncResults(results: SyncResponseDTO["results"]): string {
 }
 
 export default function FleetPage() {
+  const { t } = useLocale();
   const [nodes, setNodes] = useState<NodeDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
@@ -85,20 +88,20 @@ export default function FleetPage() {
       }
       const data = await readJsonBody<unknown>(res);
       if (!Array.isArray(data)) {
-        toast.error("节点列表格式无效");
+        toast.error(t("fleet.toast.nodesInvalid"));
         setNodes([]);
         return;
       }
       setNodes(data as NodeDTO[]);
     } catch {
-      toast.error("加载节点失败");
+      toast.error(t("fleet.toast.loadFailed"));
       setNodes([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
-  /** 刷新列表后对离线节点并发探测（上限 2），再拉一次列表（占服务端 AdGHSem，见 API 文档）。 */
+  /** After refresh, concurrently reprobe offline nodes (max 2), then reload list (uses server AdGHSem; see API docs). */
   const refreshFleet = useCallback(async () => {
     setLoading(true);
     try {
@@ -112,7 +115,7 @@ export default function FleetPage() {
       }
       const data = await readJsonBody<unknown>(res);
       if (!Array.isArray(data)) {
-        toast.error("节点列表格式无效");
+        toast.error(t("fleet.toast.nodesInvalid"));
         setNodes([]);
         return;
       }
@@ -144,12 +147,12 @@ export default function FleetPage() {
         }
       }
     } catch {
-      toast.error("加载节点失败");
+      toast.error(t("fleet.toast.loadFailed"));
       setNodes([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   async function reprobeOne(n: NodeDTO) {
     setProbeBusyId(n.id);
@@ -204,7 +207,7 @@ export default function FleetPage() {
       }
       const detail = await readJsonBody<NodeDTO>(res);
       if (!detail) {
-        toast.error("节点详情无效");
+        toast.error(t("fleet.toast.detailInvalid"));
         setDialogMode(null);
         return;
       }
@@ -214,7 +217,7 @@ export default function FleetPage() {
       setAuthKind(detail.auth_kind);
       setCredential("");
     } catch {
-      toast.error("加载节点详情失败");
+      toast.error(t("fleet.toast.detailLoadFailed"));
       setDialogMode(null);
     } finally {
       setFormBusy(false);
@@ -236,14 +239,14 @@ export default function FleetPage() {
       if (dialogMode === "add") {
         const res = await apiFetch("/nodes", { method: "POST", body });
         if (res.status === 201) {
-          toast.success("节点已创建");
+          toast.success(t("fleet.toast.created"));
           setDialogMode(null);
           await loadNodes();
           return;
         }
         if (res.status === 422) {
           const j = await readJsonBody<{ message?: string }>(res);
-          toast.error(j?.message ?? "创建失败");
+          toast.error(j?.message ?? t("fleet.toast.createFailed"));
           return;
         }
         if (!shouldSkipDuplicate401Toast(res)) {
@@ -253,14 +256,14 @@ export default function FleetPage() {
       }
       const res = await apiFetch(`/nodes/${editId}`, { method: "PATCH", body });
       if (res.ok) {
-        toast.success("节点已更新");
+        toast.success(t("fleet.toast.updated"));
         setDialogMode(null);
         await loadNodes();
         return;
       }
       if (res.status === 422) {
         const j = await readJsonBody<{ message?: string }>(res);
-        toast.error(j?.message ?? "更新失败");
+        toast.error(j?.message ?? t("fleet.toast.updateFailed"));
         return;
       }
       if (!shouldSkipDuplicate401Toast(res)) {
@@ -275,7 +278,7 @@ export default function FleetPage() {
     if (!deleteTarget) return;
     const res = await apiFetch(`/nodes/${deleteTarget.id}`, { method: "DELETE" });
     if (res.status === 204) {
-      toast.success("节点已删除");
+      toast.success(t("fleet.toast.deleted"));
       setDeleteTarget(null);
       selected.delete(deleteTarget.id);
       setSelected(new Set(selected));
@@ -294,9 +297,11 @@ export default function FleetPage() {
         const j = await readJsonBody<{ message?: string; unknown_ids?: number[] }>(res);
         const extra =
           j?.unknown_ids && j.unknown_ids.length > 0
-            ? `（unknown_ids: ${j.unknown_ids.join(", ")}）`
+            ? interpolate(t("fleet.toast.syncUnknownIds"), {
+                ids: j.unknown_ids.join(", "),
+              })
             : "";
-        toast.error(`${j?.message ?? "请求错误"}${extra}`);
+        toast.error(`${j?.message ?? t("fleet.toast.syncBadRequest")}${extra}`);
         return;
       }
       if (!shouldSkipDuplicate401Toast(res)) {
@@ -316,16 +321,19 @@ export default function FleetPage() {
       }
       parsed = raw as SyncResponseDTO;
     } catch {
-      toast.error("同步响应解析失败");
+      toast.error(t("fleet.toast.syncParseFailed"));
       return;
     }
     const anyFail = parsed.results.some((r) => !r.ok);
     if (!anyFail) {
       toast.success(
-        `同步完成（${parsed.selection}，共 ${parsed.results.length} 条结果）`,
+        interpolate(t("fleet.toast.syncDone"), {
+          selection: parsed.selection,
+          count: parsed.results.length,
+        }),
       );
     } else {
-      toast.warning("部分节点同步失败");
+      toast.warning(t("fleet.toast.syncPartialFail"));
       setTerminalText(formatSyncResults(parsed.results));
       setTerminalOpen(true);
     }
@@ -336,10 +344,8 @@ export default function FleetPage() {
     <div className="flex min-h-0 flex-1 flex-col space-y-4 overflow-auto">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Fleet</h1>
-          <p className="text-muted-foreground text-sm">
-            节点列表与同步；勾选后使用「同步已选」。
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("fleet.title")}</h1>
+          <p className="text-muted-foreground text-sm">{t("fleet.subtitle")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -350,11 +356,11 @@ export default function FleetPage() {
             disabled={loading}
           >
             <RefreshCwIcon className="size-4" />
-            刷新
+            {t("fleet.refresh")}
           </Button>
           <Button type="button" size="sm" onClick={openAdd}>
             <PlusIcon className="size-4" />
-            新增节点
+            {t("fleet.addNode")}
           </Button>
           <Button
             type="button"
@@ -367,18 +373,18 @@ export default function FleetPage() {
               })
             }
           >
-            同步已选 ({selectedList.length})
+            {t("fleet.syncSelected")} ({selectedList.length})
           </Button>
           <Button type="button" size="sm" onClick={() => setSyncAllOpen(true)}>
-            同步全部在线
+            {t("fleet.syncAllOnline")}
           </Button>
         </div>
       </div>
 
       {loading && nodes.length === 0 ? (
-        <p className="text-muted-foreground text-sm">加载中…</p>
+        <p className="text-muted-foreground text-sm">{t("fleet.loadingNodes")}</p>
       ) : nodes.length === 0 ? (
-        <p className="text-muted-foreground text-sm">暂无节点，请点击「新增节点」。</p>
+        <p className="text-muted-foreground text-sm">{t("fleet.emptyNodes")}</p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {nodes.map((n) => (
@@ -393,14 +399,14 @@ export default function FleetPage() {
                       else next.delete(n.id);
                       setSelected(next);
                     }}
-                    aria-label={`选择 ${n.name}`}
+                    aria-label={interpolate(t("fleet.selectNodeAria"), { name: n.name })}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <CardTitle className="text-base">{n.name}</CardTitle>
                       <span
                         className="inline-flex size-2.5 shrink-0 rounded-full"
-                        title={n.online ? "Online" : "Offline"}
+                        title={n.online ? t("fleet.status.online") : t("fleet.status.offline")}
                         style={{
                           backgroundColor: n.online
                             ? "oklch(0.65 0.2 145)"
@@ -410,7 +416,7 @@ export default function FleetPage() {
                     </div>
                     <CardDescription className="mt-1 flex flex-wrap items-center gap-2">
                       <Badge variant={n.online ? "default" : "secondary"}>
-                        {n.online ? "在线" : "离线"}
+                        {n.online ? t("fleet.status.online") : t("fleet.status.offline")}
                       </Badge>
                       <span className="truncate">{n.version || "—"}</span>
                       {n.last_ping_ms != null ? (
@@ -422,9 +428,9 @@ export default function FleetPage() {
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 {n.drifted ? (
-                  <span className="text-amber-500">存在配置漂移</span>
+                  <span className="text-amber-500">{t("fleet.drift.yes")}</span>
                 ) : (
-                  <span className="text-muted-foreground">与期望一致 · 无漂移</span>
+                  <span className="text-muted-foreground">{t("fleet.drift.no")}</span>
                 )}
                 <div className="flex flex-wrap gap-2">
                   <a
@@ -436,7 +442,7 @@ export default function FleetPage() {
                       "inline-flex gap-1",
                     )}
                   >
-                    打开面板
+                    {t("fleet.openPanel")}
                     <ExternalLinkIcon className="size-3.5" />
                   </a>
                   {!n.online ? (
@@ -448,7 +454,7 @@ export default function FleetPage() {
                       onClick={() => void reprobeOne(n)}
                     >
                       <RefreshCwIcon className="size-3.5" />
-                      重探测
+                      {t("fleet.reprobe")}
                     </Button>
                   ) : null}
                   <Button
@@ -458,7 +464,7 @@ export default function FleetPage() {
                     onClick={() => void openEdit(n)}
                   >
                     <PencilIcon className="size-3.5" />
-                    编辑
+                    {t("fleet.edit")}
                   </Button>
                   <Button
                     type="button"
@@ -468,7 +474,7 @@ export default function FleetPage() {
                     onClick={() => setDeleteTarget(n)}
                   >
                     <Trash2Icon className="size-3.5" />
-                    删除
+                    {t("common.delete")}
                   </Button>
                 </div>
               </CardContent>
@@ -486,10 +492,8 @@ export default function FleetPage() {
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
           <form onSubmit={(e) => void submitNode(e)}>
             <DialogHeader>
-              <DialogTitle>{dialogMode === "edit" ? "编辑节点" : "新增节点"}</DialogTitle>
-              <DialogDescription>
-                字段名与 API 一致；编辑时须重新填写凭据（credential）。
-              </DialogDescription>
+              <DialogTitle>{dialogMode === "edit" ? t("fleet.dialog.editTitle") : t("fleet.dialog.addTitle")}</DialogTitle>
+              <DialogDescription>{t("fleet.dialog.description")}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 py-2">
               <div className="space-y-1.5">
@@ -549,10 +553,10 @@ export default function FleetPage() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogMode(null)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={formBusy}>
-                {formBusy ? "提交中…" : "保存"}
+                {formBusy ? t("fleet.form.submitting") : t("common.save")}
               </Button>
             </DialogFooter>
           </form>
@@ -562,20 +566,18 @@ export default function FleetPage() {
       <AlertDialog open={syncAllOpen} onOpenChange={setSyncAllOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>同步全部在线节点？</AlertDialogTitle>
-            <AlertDialogDescription>
-              将向所有在线节点下发全局期望配置，确认继续？
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t("fleet.syncAll.title")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("fleet.syncAll.description")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setSyncAllOpen(false);
                 void runSync({});
               }}
             >
-              确认同步
+              {t("fleet.syncAll.confirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -589,22 +591,25 @@ export default function FleetPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除节点？</AlertDialogTitle>
+            <AlertDialogTitle>{t("fleet.delete.title")}</AlertDialogTitle>
             <AlertDialogDescription>
               {deleteTarget
-                ? `将永久删除「${deleteTarget.name}」（id=${deleteTarget.id}），不可恢复。`
+                ? interpolate(t("fleet.delete.description"), {
+                    name: deleteTarget.name,
+                    id: deleteTarget.id,
+                  })
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 void confirmDelete();
               }}
             >
-              删除
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -3,6 +3,7 @@ import {
   getAdminToken,
   isSkipAdminAuth,
 } from "@/lib/auth-token";
+import { getLocaleStoreSnapshot, resolveMessage } from "@/lib/i18n/resolve-message";
 
 /**
  * REST base for browser calls. With default Next rewrites, use relative `/api/v1`
@@ -102,7 +103,7 @@ export async function apiFetch(
 
   if (res.status === 429 && typeof window !== "undefined") {
     void import("sonner").then(({ toast }) => {
-      toast.warning("请求过于频繁（429），请稍后重试。");
+      toast.warning(resolveMessage("api.rateLimited", getLocaleStoreSnapshot()));
     });
   }
 
