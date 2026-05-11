@@ -1,6 +1,6 @@
 # DNSFleet
 
-[![Code Coverage](https://img.shields.io/codecov/c/github/lensdns/dnsfleet/master.svg)](https://codecov.io/github/lensdns/dnsfleet?branch=master)
+[![Code Coverage](https://codecov.io/gh/LensDNS/DNSFleet/branch/main/graph/badge.svg)](https://codecov.io/github/lensdns/dnsfleet?branch=master)
 [![Go Report Card](https://goreportcard.com/badge/github.com/lensdns/dnsfleet)](https://goreportcard.com/report/lensdns/dnsfleet)
 [![Go Doc](https://godoc.org/github.com/lensdns/dnsfleet?status.svg)](https://godoc.org/github.com/lensdns/dnsfleet)
 
@@ -86,7 +86,7 @@ All variables are read at startup from the environment (see [`internal/config/co
 | `DNSFLEET_HTTP_ADDR` | `:8080` | Listen address (Echo). |
 | `DNSFLEET_ADMIN_TOKEN` | (required) | Shared secret for **`/api/v1`** (`Authorization: Bearer` or `X-Admin-Token`). Empty token fails startup **unless** insecure mode is enabled. |
 | `DNSFLEET_ADMIN_INSECURE_DISABLE` | unset | If **exactly** `1`, skips Admin checks and allows an empty token. **Do not use in production** or on an exposed network. |
-| `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | Cap concurrent AdGuard Home HTTP calls for **drift**, **`POST /api/v1/sync`**, and **`GET /api/v1/nodes/:id/querylog`**. |
+| `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | Cap concurrent AdGuard Home HTTP calls for **drift**, **`POST /api/v1/sync`**, **`GET /api/v1/nodes/:id/querylog`**, and **`POST /api/v1/nodes/:id/probe`**（创建/编辑节点时的探测 **不经**此槽，见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。 |
 | `DNSFLEET_SYNC_TOTAL_TIMEOUT` | `5m` | Total timeout for **`POST /api/v1/sync`** (`time.ParseDuration`). |
 | `DNSFLEET_DRIFT_INTERVAL` | `5m` | Drift ticker interval; one drift run happens immediately on startup. |
 | `DNSFLEET_QUERYLOG_MAX_CONCURRENT` | `8` | Cap concurrent **`GET /control/querylog`** calls from the querylog Hub (independent of sync cap). |

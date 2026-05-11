@@ -1,6 +1,6 @@
 # DNSFleet
 
-[![Code Coverage](https://img.shields.io/codecov/c/github/lensdns/dnsfleet/master.svg)](https://codecov.io/github/lensdns/dnsfleet?branch=master)
+[![Code Coverage](https://codecov.io/gh/LensDNS/DNSFleet/branch/main/graph/badge.svg)](https://codecov.io/github/lensdns/dnsfleet?branch=master)
 [![Go Report Card](https://goreportcard.com/badge/github.com/lensdns/dnsfleet)](https://goreportcard.com/report/lensdns/dnsfleet)
 [![Go Doc](https://godoc.org/github.com/lensdns/dnsfleet?status.svg)](https://godoc.org/github.com/lensdns/dnsfleet)
 

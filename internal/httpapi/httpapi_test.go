@@ -42,6 +42,31 @@ func testDeps(t *testing.T, cfg config.Config) (*echo.Echo, *gorm.DB, func()) {
 	return e, db, cleanup
 }
 
+// testDepsWithAdGHSem is like testDeps but returns the AdGuard semaphore for tests that need to starve acquire (POST /nodes/:id/probe 503).
+func testDepsWithAdGHSem(t *testing.T, cfg config.Config) (*echo.Echo, *gorm.DB, chan struct{}, func()) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := fleetdb.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
+	cleanup := func() {
+		sqlDB, _ := db.DB()
+		_ = sqlDB.Close()
+	}
+	e := echo.New()
+	sem := make(chan struct{}, cfg.SyncMaxConcurrent)
+	deps := Deps{
+		Config:  cfg,
+		DB:      db,
+		AdGHSem: sem,
+		Hub:     ConnectedStubHub{MaxBytes: cfg.WsMaxFrameBytes},
+	}
+	Mount(e, deps)
+	return e, db, sem, cleanup
+}
+
 func baseCfg() config.Config {
 	return config.Config{
 		AdminToken:            "admintok",

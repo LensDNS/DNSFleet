@@ -35,6 +35,7 @@ import {
 import {
   logRowDedupeKeyHex,
   MAX_MERGED_LOG_LINES,
+  mergeNewestFirstDedupeIncremental,
   mergeSortedDedupeRows,
   recomputePausedDeep,
 } from "@/lib/live-logs-merge";
@@ -120,8 +121,17 @@ export default function LiveLogsPage() {
   const fetchGen = useRef(0);
   const warnedNoUrl = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const autoFillBursts = useRef(0);
   const prevLogLen = useRef(0);
+  const globalOlderBusy = useRef(false);
+  const olderCooldownUntil = useRef(0);
+  const wasAwayFromBottom = useRef(false);
+  const pageSession = useRef(0);
+  const pendingWsEntries = useRef<
+    { nodeId: number; nodeName: string; entry: Record<string, unknown>; receivedAt: number }[]
+  >([]);
+  const wsFlushRaf = useRef<number | null>(null);
 
   useEffect(
     () => () => {
@@ -141,6 +151,13 @@ export default function LiveLogsPage() {
     pausedDeepRef.current = pausedDeep;
   }, [pausedDeep]);
 
+  useEffect(() => {
+    const session = pageSession;
+    return () => {
+      session.current += 1;
+    };
+  }, []);
+
   const detailJson = useMemo(() => {
     if (!detail) return "";
     try {
@@ -156,6 +173,10 @@ export default function LiveLogsPage() {
   );
 
   const loadOlderPage = useCallback(async () => {
+    if (globalOlderBusy.current) return;
+    const now = Date.now();
+    if (now < olderCooldownUntil.current) return;
+
     const rows = logRowsRef.current;
     const tails = nodeTailsRef.current;
     const paused = pausedDeepRef.current;
@@ -186,6 +207,10 @@ export default function LiveLogsPage() {
     const st = tails[pickedNodeId];
     if (st.nextOlderThan === null) return;
 
+    const sessionAtStart = pageSession.current;
+    globalOlderBusy.current = true;
+    olderCooldownUntil.current = Date.now() + 300;
+
     olderInFlight.current.add(pickedNodeId);
     loadOlderAbortRef.current?.abort();
     const ac = new AbortController();
@@ -197,17 +222,17 @@ export default function LiveLogsPage() {
         response_status: "all",
         signal: ac.signal,
       });
+      if (sessionAtStart !== pageSession.current) return;
       const receivedAt = Date.now();
       const incoming: LogRow[] = [];
       const nodeLabel = rows[pickIdx]?.nodeName ?? `node ${pickedNodeId}`;
       for (const entry of ql.data) {
         incoming.push(await buildLogRow(pickedNodeId, nodeLabel, entry, receivedAt));
       }
-      setLogRows((prev) => {
-        const merged = mergeSortedDedupeRows(prev, incoming);
-        setPausedDeep(recomputePausedDeep(merged));
-        return merged;
-      });
+      const merged = mergeSortedDedupeRows(logRowsRef.current, incoming);
+      logRowsRef.current = merged;
+      setLogRows(merged);
+      queueMicrotask(() => setPausedDeep(recomputePausedDeep(merged)));
       setNodeTails((prev) => ({
         ...prev,
         [pickedNodeId]: {
@@ -221,6 +246,7 @@ export default function LiveLogsPage() {
         toast.warning(`加载更早日志失败：${msg}`);
       }
     } finally {
+      globalOlderBusy.current = false;
       if (loadOlderAbortRef.current === ac) {
         loadOlderAbortRef.current = null;
       }
@@ -231,8 +257,15 @@ export default function LiveLogsPage() {
   const onTableScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight > 100) return;
-    void loadOlderPage();
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist > 150) {
+      wasAwayFromBottom.current = true;
+      return;
+    }
+    if (dist <= 100 && wasAwayFromBottom.current) {
+      wasAwayFromBottom.current = false;
+      void loadOlderPage();
+    }
   }, [loadOlderPage]);
 
   const historyStatusMessage = useMemo(() => {
@@ -265,10 +298,27 @@ export default function LiveLogsPage() {
     if (!el || logRows.length === 0) return;
     const short = el.scrollHeight <= el.clientHeight + 8;
     if (!short) return;
-    if (autoFillBursts.current >= 20) return;
+    if (autoFillBursts.current >= 9) return;
     autoFillBursts.current += 1;
     void loadOlderPage();
   }, [logRows.length, nodeTails, initialLoad, loadOlderPage]);
+
+  useEffect(() => {
+    if (initialLoad !== "ready") return;
+    const root = scrollRef.current;
+    const sent = sentinelRef.current;
+    if (!root || !sent) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const ent of entries) {
+          if (ent.isIntersecting) void loadOlderPage();
+        }
+      },
+      { root, rootMargin: "160px 0px", threshold: 0 },
+    );
+    io.observe(sent);
+    return () => io.disconnect();
+  }, [initialLoad, loadOlderPage, logRows.length]);
 
   useEffect(() => {
     const gen = ++fetchGen.current;
@@ -323,6 +373,7 @@ export default function LiveLogsPage() {
 
         if (gen !== fetchGen.current) return;
         const merged = mergeSortedDedupeRows([], incoming);
+        logRowsRef.current = merged;
         setLogRows(merged);
         setNodeTails(tails);
         setPausedDeep(recomputePausedDeep(merged));
@@ -369,6 +420,37 @@ export default function LiveLogsPage() {
         reconnectTimer = null;
         connect();
       }, delay);
+    }
+
+    function flushWsPending() {
+      const batch = pendingWsEntries.current.splice(0);
+      if (batch.length === 0) return;
+      void (async () => {
+        const built: LogRow[] = [];
+        for (const item of batch) {
+          try {
+            built.push(
+              await buildLogRow(item.nodeId, item.nodeName, item.entry, item.receivedAt),
+            );
+          } catch {
+            // skip one malformed row
+          }
+        }
+        if (cancelled || built.length === 0) return;
+        const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, built);
+        logRowsRef.current = merged;
+        setLogRows(merged);
+        queueMicrotask(() => setPausedDeep(recomputePausedDeep(merged)));
+      })();
+    }
+
+    function scheduleWsFlush() {
+      if (cancelled) return;
+      if (wsFlushRaf.current != null) return;
+      wsFlushRaf.current = requestAnimationFrame(() => {
+        wsFlushRaf.current = null;
+        flushWsPending();
+      });
     }
 
     function connect() {
@@ -418,15 +500,8 @@ export default function LiveLogsPage() {
           const nodeId =
             typeof msg.node_id === "number" && Number.isFinite(msg.node_id) ? msg.node_id : 0;
           const nodeName = typeof msg.node_name === "string" ? msg.node_name : "";
-          void (async () => {
-            const row = await buildLogRow(nodeId, nodeName, entry, receivedAt);
-            if (cancelled) return;
-            setLogRows((prev) => {
-              const merged = mergeSortedDedupeRows(prev, [row]);
-              setPausedDeep(recomputePausedDeep(merged));
-              return merged;
-            });
-          })();
+          pendingWsEntries.current.push({ nodeId, nodeName, entry, receivedAt });
+          scheduleWsFlush();
         }
       };
 
@@ -437,6 +512,12 @@ export default function LiveLogsPage() {
 
       socket.onclose = () => {
         ws = null;
+        if (wsFlushRaf.current != null) {
+          cancelAnimationFrame(wsFlushRaf.current);
+          wsFlushRaf.current = null;
+        }
+        // Drop queued payloads without a final flush (at most one rAF batch). Reconnect resumes tail; v0.1 accepts this loss.
+        pendingWsEntries.current = [];
         if (cancelled) return;
         setStatus("closed");
         scheduleReconnect();
@@ -447,6 +528,12 @@ export default function LiveLogsPage() {
 
     return () => {
       cancelled = true;
+      if (wsFlushRaf.current != null) {
+        cancelAnimationFrame(wsFlushRaf.current);
+        wsFlushRaf.current = null;
+      }
+      // Unmount: same as onclose — discard pending WS queue (no flush-to-state).
+      pendingWsEntries.current = [];
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       if (ws) {
         ws.onclose = null;
@@ -540,7 +627,8 @@ export default function LiveLogsPage() {
                   </td>
                 </tr>
               ) : (
-                logRows.map((row) => {
+                <>
+                {logRows.map((row) => {
                   const timeStr = formatDisplayTime(row.entry.time, row.receivedAt);
                   const summaryLine = formatResponseSummaryLine(row.normalized);
                   return (
@@ -626,7 +714,13 @@ export default function LiveLogsPage() {
                       </td>
                     </tr>
                   );
-                })
+                })}
+                <tr aria-hidden className="h-px">
+                  <td colSpan={6} className="p-0">
+                    <div ref={sentinelRef} className="h-1 w-full" />
+                  </td>
+                </tr>
+                </>
               )}
               {historyStatusMessage ? (
                 <tr className="border-t border-border bg-muted/30">

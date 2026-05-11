@@ -37,8 +37,9 @@ import {
 import { SyncTerminalDrawer } from "@/components/sync-terminal-drawer";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { apiFetch, readErrorMessage, readJsonBody, shouldSkipDuplicate401Toast } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import type { AuthKind, NodeDTO, SyncResponseDTO } from "@/lib/dnsfleet-types";
+import { mapLimit, probeNode } from "@/lib/nodes";
+import { cn } from "@/lib/utils";
 
 function formatSyncResults(results: SyncResponseDTO["results"]): string {
   return results
@@ -64,6 +65,7 @@ export default function FleetPage() {
   const [dialogMode, setDialogMode] = useState<"add" | "edit" | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
   const [formBusy, setFormBusy] = useState(false);
+  const [probeBusyId, setProbeBusyId] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
@@ -95,6 +97,78 @@ export default function FleetPage() {
       setLoading(false);
     }
   }, []);
+
+  /** 刷新列表后对离线节点并发探测（上限 2），再拉一次列表（占服务端 AdGHSem，见 API 文档）。 */
+  const refreshFleet = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetch("/nodes");
+      if (!res.ok) {
+        if (!shouldSkipDuplicate401Toast(res)) {
+          toast.error(await readErrorMessage(res));
+        }
+        setNodes([]);
+        return;
+      }
+      const data = await readJsonBody<unknown>(res);
+      if (!Array.isArray(data)) {
+        toast.error("节点列表格式无效");
+        setNodes([]);
+        return;
+      }
+      const list = data as NodeDTO[];
+      setNodes(list);
+      const offline = list.filter((n) => !n.online);
+      if (offline.length > 0) {
+        await mapLimit(offline, 2, async (n) => {
+          const pr = await probeNode(n.id);
+          if (!pr.ok) {
+            const msg = await readErrorMessage(pr);
+            if (pr.status === 422 || pr.status === 503) {
+              toast.warning(`${n.name}: ${msg}`);
+            } else if (!shouldSkipDuplicate401Toast(pr)) {
+              toast.error(`${n.name}: ${msg}`);
+            }
+          }
+        });
+        const res2 = await apiFetch("/nodes");
+        if (!res2.ok) {
+          if (!shouldSkipDuplicate401Toast(res2)) {
+            toast.error(await readErrorMessage(res2));
+          }
+          return;
+        }
+        const data2 = await readJsonBody<unknown>(res2);
+        if (Array.isArray(data2)) {
+          setNodes(data2 as NodeDTO[]);
+        }
+      }
+    } catch {
+      toast.error("加载节点失败");
+      setNodes([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  async function reprobeOne(n: NodeDTO) {
+    setProbeBusyId(n.id);
+    try {
+      const pr = await probeNode(n.id);
+      if (!pr.ok) {
+        const msg = await readErrorMessage(pr);
+        if (pr.status === 422 || pr.status === 503) {
+          toast.warning(msg);
+        } else if (!shouldSkipDuplicate401Toast(pr)) {
+          toast.error(msg);
+        }
+        return;
+      }
+      await loadNodes();
+    } finally {
+      setProbeBusyId(null);
+    }
+  }
 
   useEffect(() => {
     void Promise.resolve().then(() => loadNodes());
@@ -272,7 +346,7 @@ export default function FleetPage() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void loadNodes()}
+            onClick={() => void refreshFleet()}
             disabled={loading}
           >
             <RefreshCwIcon className="size-4" />
@@ -365,6 +439,18 @@ export default function FleetPage() {
                     打开面板
                     <ExternalLinkIcon className="size-3.5" />
                   </a>
+                  {!n.online ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="xs"
+                      disabled={probeBusyId === n.id || loading}
+                      onClick={() => void reprobeOne(n)}
+                    >
+                      <RefreshCwIcon className="size-3.5" />
+                      重探测
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant="ghost"

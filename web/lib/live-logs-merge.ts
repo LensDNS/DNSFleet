@@ -32,6 +32,56 @@ export function mergeSortedDedupeRows<T extends LogRowSortable>(rows: T[], incom
   return out;
 }
 
+function mergeTwoSortedNewestFirst<T extends LogRowSortable>(a: T[], b: T[]): T[] {
+  const out: T[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (compareLogRowsNewestFirst(a[i]!, b[j]!) <= 0) {
+      out.push(a[i]!);
+      i++;
+    } else {
+      out.push(b[j]!);
+      j++;
+    }
+  }
+  while (i < a.length) {
+    out.push(a[i]!);
+    i++;
+  }
+  while (j < b.length) {
+    out.push(b[j]!);
+    j++;
+  }
+  return out;
+}
+
+/**
+ * WS hot path: `prev` is already newest-first; `incoming` may be out of order.
+ * Dedupes against `prev`, sorts the fresh rows only, then linear-merge with `prev` (no full-table sort).
+ */
+export function mergeNewestFirstDedupeIncremental<T extends LogRowSortable>(
+  prev: T[],
+  incoming: T[],
+): T[] {
+  const prevKeys = new Set(prev.map((r) => r.dedupeKey));
+  const fresh: T[] = [];
+  const seenFresh = new Set<string>();
+  for (const r of incoming) {
+    if (prevKeys.has(r.dedupeKey)) continue;
+    if (seenFresh.has(r.dedupeKey)) continue;
+    seenFresh.add(r.dedupeKey);
+    fresh.push(r);
+  }
+  if (fresh.length === 0) return prev;
+  fresh.sort(compareLogRowsNewestFirst);
+  let merged = mergeTwoSortedNewestFirst(prev, fresh);
+  if (merged.length > MAX_MERGED_LOG_LINES) {
+    merged = merged.slice(0, MAX_MERGED_LOG_LINES);
+  }
+  return merged;
+}
+
 /**
  * Per-node deep pagination pause: if this node's newest row is still far older than
  * the **oldest** row among **other** nodes, pause `older_than` for this node.
