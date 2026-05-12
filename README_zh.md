@@ -86,7 +86,7 @@ docker compose -f deploy/docker-compose.yml up --build
 | `DNSFLEET_HTTP_ADDR` | `:8080` | 监听地址（Echo）。 |
 | `DNSFLEET_ADMIN_TOKEN` | （必填） | **`/api/v1`** 共享密钥（`Authorization: Bearer` 或 `X-Admin-Token`）。未启用 insecure 且 token 为空（仅空白）时进程启动失败。 |
 | `DNSFLEET_ADMIN_INSECURE_DISABLE` | 未设置 | 值**恰好为** `1` 时跳过 Admin 且允许空 token。**禁止用于生产或公网暴露环境。** |
-| `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | 对 AdGuard Home 的 HTTP 并发上限；**漂移**、**`POST /api/v1/sync`**、**`GET /api/v1/nodes/:id/querylog`**（Live Logs 历史代理）**共用**该信号量。 |
+| `DNSFLEET_SYNC_MAX_CONCURRENT` | `8` | 对 AdGuard Home 的 HTTP 并发上限；**漂移**、**`POST /api/v1/sync`**、**`GET /api/v1/nodes/:id/querylog`**、**`POST /api/v1/nodes/:id/probe`** **共用**该信号量；**创建/编辑节点**时的探测 **不经**此槽（见 [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)）。 |
 | `DNSFLEET_SYNC_TOTAL_TIMEOUT` | `5m` | 单次 **`POST /api/v1/sync`** 总超时（`time.ParseDuration` 语法）。 |
 | `DNSFLEET_DRIFT_INTERVAL` | `5m` | 漂移检测周期；启动后**先立即跑一轮**再进入 ticker。 |
 | `DNSFLEET_QUERYLOG_MAX_CONCURRENT` | `8` | **Hub** 对 **`GET /control/querylog`** 的并发上限；**与** `DNSFLEET_SYNC_MAX_CONCURRENT` **独立**。 |
