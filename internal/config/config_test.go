@@ -164,6 +164,96 @@ func TestLoad_QueryLogPoll_invalid(t *testing.T) {
 	}
 }
 
+func TestApplyLaunchOverrides(t *testing.T) {
+	cases := []struct {
+		name         string
+		initial      Config
+		adminFlag    string
+		listenFlag   string
+		wantAdmin    string
+		wantHTTPAddr string
+	}{
+		{
+			name: "empty flags leave cfg unchanged",
+			initial: Config{
+				AdminToken: "from-env",
+				HTTPAddr:   ":8080",
+			},
+			adminFlag:    "",
+			listenFlag:   "",
+			wantAdmin:    "from-env",
+			wantHTTPAddr: ":8080",
+		},
+		{
+			name: "whitespace-only flags do not override",
+			initial: Config{
+				AdminToken: "from-env",
+				HTTPAddr:   ":8080",
+			},
+			adminFlag:    " ",
+			listenFlag:   " \t ",
+			wantAdmin:    "from-env",
+			wantHTTPAddr: ":8080",
+		},
+		{
+			name: "non-empty admin overrides",
+			initial: Config{
+				AdminToken: "from-env",
+				HTTPAddr:   ":8080",
+			},
+			adminFlag:    "cli-token",
+			listenFlag:   "",
+			wantAdmin:    "cli-token",
+			wantHTTPAddr: ":8080",
+		},
+		{
+			name: "non-empty listen overrides",
+			initial: Config{
+				AdminToken: "t",
+				HTTPAddr:   ":8080",
+			},
+			adminFlag:    "",
+			listenFlag:   ":18080",
+			wantAdmin:    "t",
+			wantHTTPAddr: ":18080",
+		},
+		{
+			name: "both non-empty override both",
+			initial: Config{
+				AdminToken: "a",
+				HTTPAddr:   ":1",
+			},
+			adminFlag:    "b",
+			listenFlag:   ":2",
+			wantAdmin:    "b",
+			wantHTTPAddr: ":2",
+		},
+		{
+			name: "trim admin and listen",
+			initial: Config{
+				AdminToken: "x",
+				HTTPAddr:   ":y",
+			},
+			adminFlag:    "  z  ",
+			listenFlag:   "  :9090  ",
+			wantAdmin:    "z",
+			wantHTTPAddr: ":9090",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.initial
+			ApplyLaunchOverrides(&cfg, tc.adminFlag, tc.listenFlag)
+			if cfg.AdminToken != tc.wantAdmin {
+				t.Fatalf("AdminToken: got %q want %q", cfg.AdminToken, tc.wantAdmin)
+			}
+			if cfg.HTTPAddr != tc.wantHTTPAddr {
+				t.Fatalf("HTTPAddr: got %q want %q", cfg.HTTPAddr, tc.wantHTTPAddr)
+			}
+		})
+	}
+}
+
 func TestLoad_RejectsInMemoryDSN(t *testing.T) {
 	t.Setenv(envHTTPAddr, "")
 

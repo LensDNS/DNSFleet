@@ -45,9 +45,120 @@ The embedded web console supports **English and Chinese** UI copy; **English is 
 
 **Released builds:** see **GitHub Releases** for versioned **static binaries** (Linux, Windows, macOS; amd64/arm64 where applicable), **checksums**, and **container images** on **GHCR** (tag `v*` workflow).
 
-## Quick start
+## Run a release binary or container (no Go / Node)
+
+You do **not** need a compiler on the machine where the control plane runs.
+
+### Asset names on GitHub Releases
+
+Each archive or standalone file follows:
+
+`dnsfleet-<tag>-<os>-<arch>[.exe]`
+
+- **`<tag>`** is the Git tag (for example **`v0.1.1`**).
+- **`<os>`** is `linux`, `windows`, or `darwin`.
+- **`<arch>`** is `amd64` or `arm64`.
+- **`.exe`** is only on Windows.
+
+Examples (replace the version with the one you downloaded):
+
+| OS / arch | Example filename |
+|-----------|------------------|
+| Windows amd64 | `dnsfleet-v0.1.1-windows-amd64.exe` |
+| Linux amd64 | `dnsfleet-v0.1.1-linux-amd64` |
+| Linux arm64 | `dnsfleet-v0.1.1-linux-arm64` |
+| macOS amd64 (Intel) | `dnsfleet-v0.1.1-darwin-amd64` |
+| macOS arm64 (Apple Silicon) | `dnsfleet-v0.1.1-darwin-arm64` |
+
+Verify downloads with **`SHA256SUMS`** from the same release.
+
+### Minimal CLI: native binary
+
+The process reads **environment variables** first (see [Configuration](#configuration)); it does **not** read a `.env` file by itself.
+
+**Optional flags** **`-admin-token`** and **`-listen`**, when non-empty, **override the corresponding configuration fields** after values are read from the environment (**`DNSFLEET_ADMIN_TOKEN`** and **`DNSFLEET_HTTP_ADDR`**, respectively; same sequence as **`dnsfleet -h`**). Go uses a **single** leading `-`; run **`dnsfleet -h`** for built-in help.
+
+**Linux / macOS** (from the directory containing the binary):
+
+```bash
+chmod +x dnsfleet-v0.1.1-linux-amd64   # Linux example; skip on macOS if already executable
+export DNSFLEET_ADMIN_TOKEN='your-long-random-secret'
+./dnsfleet-v0.1.1-linux-amd64
+```
+
+**Windows (PowerShell)**:
+
+```powershell
+cd ~\Downloads   # or wherever you saved the file
+$env:DNSFLEET_ADMIN_TOKEN='your-long-random-secret'
+.\dnsfleet-v0.1.1-windows-amd64.exe
+```
+
+**Same examples with a flag instead of `export` / `$env:`** (handy for a first run; see security note below):
+
+```bash
+./dnsfleet-v0.1.1-linux-amd64 -admin-token 'your-long-random-secret'
+```
+
+```powershell
+.\dnsfleet-v0.1.1-windows-amd64.exe -admin-token 'your-long-random-secret'
+```
+
+Optional listen override: **`-listen :8081`** (overrides **`DNSFLEET_HTTP_ADDR`**; when the env var is unset, the default remains **`:8080`**).
+
+**Security:** On Unix-like systems, other users may see process **arguments** in **`ps(1)`**; on **shared hosts** prefer **`DNSFLEET_ADMIN_TOKEN`** via the environment (systemd, Docker, Compose) or a secret manager instead of putting secrets on the command line.
+
+Then open **`http://127.0.0.1:8080`** (unless you passed **`-listen`**). Smoke test: **`GET /healthz`** returns **`ok`**.
+
+If the window closes immediately when double-clicking the `.exe`, run it from PowerShell or CMD so you can see the error (usually a missing admin token—set **`DNSFLEET_ADMIN_TOKEN`**, pass **`-admin-token`**, or use **`DNSFLEET_ADMIN_INSECURE_DISABLE=1`** for local-only). **`dnsfleet -h`** prints usage without starting the server or creating the SQLite data directory.
+
+### Lower-friction ways to supply the Admin token
+
+Typing `export` / `$env:...` each time is normal for servers but annoying on a laptop. Practical options:
+
+1. **Docker Compose** — clone or copy [`deploy/docker-compose.yml`](deploy/docker-compose.yml), replace **`DNSFLEET_ADMIN_TOKEN: "change-me-in-production"`** with your secret, then from the repo root:  
+   `docker compose -f deploy/docker-compose.yml up --build`  
+   (No shell `export` needed; see [`deploy/README.md`](deploy/README.md) for volumes and permissions.)
+
+2. **Small wrapper next to the binary** — e.g. on Windows, `run-dnsfleet.ps1` containing only setting `$env:DNSFLEET_ADMIN_TOKEN` and `Start-Process` / `& .\dnsfleet-....exe`.
+
+3. **`.env` + shell** — copy [`.env.example`](.env.example) to **`.env`**, edit **`DNSFLEET_ADMIN_TOKEN`**, then in **bash**:
+
+   ```bash
+   set -a && source .env && set +a && ./dnsfleet-v0.1.1-linux-amd64
+   ```
+
+   (Still environment variables under the hood; the file is just easier to edit than a long one-liner.)
+
+Optional **auto-load of `.env` inside the Go binary** would add behavior and edge cases (Windows paths, quoting, secrets on disk); v0.1.x keeps **explicit env only**. If you want file-based config without a shell, Compose or a one-line wrapper is the usual approach.
+
+### Docker image from GHCR (no local build)
+
+Use the image tag published with the release (example org/repo; confirm on the release page if yours differs):
+
+```bash
+docker run --rm \
+  -e DNSFLEET_ADMIN_TOKEN=your-long-random-secret \
+  -p 8080:8080 \
+  ghcr.io/lensdns/dnsfleet:v0.1.1
+```
+
+Persist SQLite in a volume (path inside the container must be writable; see [`deploy/README.md`](deploy/README.md)):
+
+```bash
+docker run --rm \
+  -e DNSFLEET_ADMIN_TOKEN=your-long-random-secret \
+  -e DNSFLEET_DB_PATH=/data/dnsfleet.db \
+  -p 8080:8080 \
+  -v dnsfleet-data:/data \
+  ghcr.io/lensdns/dnsfleet:v0.1.1
+```
+
+## Quick start (build from source)
 
 **Requirements:** Go **1.26+** (see `go.mod`), **Node 22+** only if you rebuild the web UI from [`web/`](web/).
+
+If you only need a prebuilt binary or container, use [Run a release binary or container](#run-a-release-binary-or-container-no-go--node) above.
 
 1. Copy [`.env.example`](.env.example) to `.env` (or export the same variables). The process reads **`os.Getenv`** only; it does **not** auto-load `.env`.
 2. Set **`DNSFLEET_ADMIN_TOKEN`** to a strong secret (unless you deliberately use the insecure dev switch documented below).
@@ -56,7 +167,7 @@ The embedded web console supports **English and Chinese** UI copy; **English is 
 ```bash
 cd web && npm ci && npm run build && cd ..
 make ensure-webui-dist   # Unix / Git Bash; or: powershell -File scripts/ensure-webui-dist.ps1
-go run ./cmd/dnsfleet
+go run ./cmd/dnsfleet    # optional: -admin-token … / -listen … / -h
 ```
 
 **Docker (recommended for trials):** from the repository root (build context is the repo root):
@@ -80,7 +191,7 @@ Details: [`deploy/README.md`](deploy/README.md) (volumes, non-root UID, image bu
 
 ## Configuration
 
-All variables are read at startup from the environment (see [`internal/config/config.go`](internal/config/config.go)).
+All variables are read at startup from the environment (see [`internal/config/config.go`](internal/config/config.go)). **Optional flags** **`-admin-token`** and **`-listen`**, when non-empty, override **`DNSFLEET_ADMIN_TOKEN`** and **`DNSFLEET_HTTP_ADDR`** after values are read from the environment (same sequence as **`dnsfleet -h`**). Run **`dnsfleet -h`** for a short summary.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -126,6 +237,10 @@ cd web && npm ci && npm run lint && npm run test && npm run build
 **GitHub Actions:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the **Go + web** matrix on **Ubuntu, Windows, and macOS**, uploads **Go coverage** from the Ubuntu job to [**Codecov**](https://codecov.io) (optional repo secret **`CODECOV_TOKEN`**, or enable Codecov’s GitHub app / OIDC on your account), then builds the **same Docker image as release** with **no registry push**. Pushing a tag matching **`v*`** runs [`.github/workflows/release.yml`](.github/workflows/release.yml): same tests, **multi-platform static binaries** and **SHA256SUMS** attached to the GitHub Release, and the image pushed to **GHCR**.
 
 Design documents and maintainer-only notes are **not shipped** with this repository; behavior is defined by **code** and the **public** files linked above.
+
+## Contributing
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how we scope features (unified operational surface, Tier A/B/C, anti-goals) and what to run before opening a PR.
 
 ## License
 

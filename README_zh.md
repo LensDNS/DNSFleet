@@ -43,9 +43,118 @@
 
 **发行物：** 见 **GitHub Releases** 的版本化 **静态二进制**（Linux / Windows / macOS；含 amd64/arm64 等组合）、**校验和**，以及推送到 **GHCR** 的容器镜像（推送 **`v*`** 标签触发工作流）。
 
-## 快速开始
+## 直接运行发行版（无需本机 Go / Node）
+
+运行控制面的机器上**不必**安装编译器。
+
+### GitHub Releases 上的文件名
+
+一般为：
+
+`dnsfleet-<标签>-<系统>-<架构>[.exe]`
+
+- **`<标签>`**：Git 标签，例如 **`v0.1.1`**。
+- **`<系统>`**：`linux`、`windows`、`darwin`。
+- **`<架构>`**：`amd64` 或 `arm64`。
+- **`.exe`**：仅 Windows。
+
+示例（请换成你实际下载的版本号）：
+
+| 系统 / 架构 | 示例文件名 |
+|-------------|------------|
+| Windows amd64 | `dnsfleet-v0.1.1-windows-amd64.exe` |
+| Linux amd64 | `dnsfleet-v0.1.1-linux-amd64` |
+| Linux arm64 | `dnsfleet-v0.1.1-linux-arm64` |
+| macOS amd64（Intel） | `dnsfleet-v0.1.1-darwin-amd64` |
+| macOS arm64（Apple Silicon） | `dnsfleet-v0.1.1-darwin-arm64` |
+
+请用同一次 Release 里的 **`SHA256SUMS`** 校验下载文件。
+
+### 最小命令行：原生二进制
+
+进程**首先**从**环境变量**载入配置（见下文 [配置](#配置)），**不会**自动读取项目根下的 `.env` 文件。**环境变量读入后**，可选用 **`-admin-token`**、**`-listen`**：仅在**非空**时分别覆盖 **`DNSFLEET_ADMIN_TOKEN`**、**`DNSFLEET_HTTP_ADDR`**（顺序与 **`dnsfleet -h`** 一致）。Go 惯例为**单横线** `-`；运行 **`dnsfleet -h`** 查看内置说明。
+
+**Linux / macOS**（在二进制所在目录）：
+
+```bash
+chmod +x dnsfleet-v0.1.1-linux-amd64   # 以 Linux 为例；macOS 若已可执行可省略
+export DNSFLEET_ADMIN_TOKEN='你的长随机密钥'
+./dnsfleet-v0.1.1-linux-amd64
+```
+
+**Windows（PowerShell）**：
+
+```powershell
+cd ~\Downloads   # 或你保存 exe 的目录
+$env:DNSFLEET_ADMIN_TOKEN='你的长随机密钥'
+.\dnsfleet-v0.1.1-windows-amd64.exe
+```
+
+**不想先设环境变量时，可用 flag 首次启动**（见下安全提示）：
+
+```bash
+./dnsfleet-v0.1.1-linux-amd64 -admin-token '你的长随机密钥'
+```
+
+```powershell
+.\dnsfleet-v0.1.1-windows-amd64.exe -admin-token '你的长随机密钥'
+```
+
+监听地址可选 **`-listen :8081`**（覆盖 **`DNSFLEET_HTTP_ADDR`**；若环境变量未设置，默认仍为 **`:8080`**）。
+
+**安全：** 在类 Unix 系统上，其他用户可能通过 **`ps(1)`** 看到**进程参数**；在**共享主机**上更推荐通过环境（systemd、Docker、Compose）或密钥系统注入 **`DNSFLEET_ADMIN_TOKEN`**，避免在命令行上暴露密钥。
+
+浏览器打开 **`http://127.0.0.1:8080`**（若使用了 **`-listen`** 则改为对应端口）。烟测：**`GET /healthz`** 应返回 **`ok`**。
+
+若在资源管理器里**双击** `.exe` 窗口一闪而过，请在 PowerShell / CMD 里运行以便看到报错（常见为未提供 Admin token：设置 **`DNSFLEET_ADMIN_TOKEN`**、传入 **`-admin-token`**，或本地开发用 **`DNSFLEET_ADMIN_INSECURE_DISABLE=1`**）。**`dnsfleet -h`** 仅打印用法，**不会**启动服务或创建数据目录。
+
+### 不想每次敲 `export` / `$env:` 时怎么办
+
+环境变量是服务端常见约定，但日常笔记本上反复输入确实麻烦，可以这样选：
+
+1. **Docker Compose** — 克隆或复制 [`deploy/docker-compose.yml`](deploy/docker-compose.yml)，把其中的 **`DNSFLEET_ADMIN_TOKEN: "change-me-in-production"`** 改成你的密钥，在仓库根执行：  
+   `docker compose -f deploy/docker-compose.yml up --build`  
+   不必在 shell 里 `export`；卷与权限见 [`deploy/README.md`](deploy/README.md)。
+
+2. **在 exe 旁放一个小脚本** — 例如 Windows 下 `run-dnsfleet.ps1` 里两行：设置 `$env:DNSFLEET_ADMIN_TOKEN` 再调用 `.\dnsfleet-….exe`。
+
+3. **`.env` + shell** — 复制 [`.env.example`](.env.example) 为 **`.env`**，编辑 **`DNSFLEET_ADMIN_TOKEN`**，在 **bash** 中：
+
+   ```bash
+   set -a && source .env && set +a && ./dnsfleet-v0.1.1-linux-amd64
+   ```
+
+   （本质仍是注入环境变量，只是密钥写在文件里更好改。）
+
+当前 **v0.1.x** 不在二进制内嵌「自动读 `.env`」，以免引入路径/编码/敏感文件落盘等歧义；若将来要做，会单独在变更说明里写清。若希望**完全不用 shell 配环境变量**，优先用 **Compose 改 YAML** 或 **一键脚本**。
+
+### GHCR 镜像（不在本机构建）
+
+使用与 Release 对应的镜像标签（示例组织/仓库名以 Release 页面为准）：
+
+```bash
+docker run --rm \
+  -e DNSFLEET_ADMIN_TOKEN=你的长随机密钥 \
+  -p 8080:8080 \
+  ghcr.io/lensdns/dnsfleet:v0.1.1
+```
+
+SQLite 持久化到卷（容器内路径需可写，见 [`deploy/README.md`](deploy/README.md)）：
+
+```bash
+docker run --rm \
+  -e DNSFLEET_ADMIN_TOKEN=你的长随机密钥 \
+  -e DNSFLEET_DB_PATH=/data/dnsfleet.db \
+  -p 8080:8080 \
+  -v dnsfleet-data:/data \
+  ghcr.io/lensdns/dnsfleet:v0.1.1
+```
+
+## 快速开始（从源码构建）
 
 **依赖：** **Go 1.26+**（见 `go.mod`）；若从源码重建前端，需要 **Node 22+**（[`web/`](web/)）。
+
+若只需预编译二进制或镜像，见上文 [直接运行发行版](#直接运行发行版无需本机-go--node)。
 
 1. 复制 [`.env.example`](.env.example) 为 `.env`（或自行导出相同变量）。进程仅读 **`os.Getenv`**，**不会**自动加载 `.env` 文件。
 2. 将 **`DNSFLEET_ADMIN_TOKEN`** 设为强密钥（除非按下文明确使用仅用于本地的 insecure 开关）。
@@ -54,7 +163,7 @@
 ```bash
 cd web && npm ci && npm run build && cd ..
 make ensure-webui-dist   # Unix / Git Bash；或：powershell -File scripts/ensure-webui-dist.ps1
-go run ./cmd/dnsfleet
+go run ./cmd/dnsfleet    # 可选：-admin-token … / -listen … / -h
 ```
 
 **Docker（试用推荐）：** 在仓库根目录（构建上下文为仓库根）：
@@ -78,7 +187,7 @@ docker compose -f deploy/docker-compose.yml up --build
 
 ## 配置
 
-启动时从环境变量读取（与 [`internal/config/config.go`](internal/config/config.go) 一致）。
+启动时从环境变量读取（与 [`internal/config/config.go`](internal/config/config.go) 一致）。**环境变量读入后**，可选启动参数 **`-admin-token`**（非空覆盖 **`DNSFLEET_ADMIN_TOKEN`**）、**`-listen`**（非空覆盖 **`DNSFLEET_HTTP_ADDR`**），顺序与 **`dnsfleet -h`** 一致。运行 **`dnsfleet -h`** 可查看简短说明。
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
@@ -124,6 +233,10 @@ cd web && npm ci && npm run lint && npm run test && npm run build
 **GitHub Actions：** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 在 **Ubuntu / Windows / macOS** 跑 **Go + Web** 全量检查；**Ubuntu** 任务会将 **Go 覆盖率** 上传至 [**Codecov**](https://codecov.io)（可选仓库密钥 **`CODECOV_TOKEN`**，或在 Codecov 侧启用 GitHub 应用 / OIDC），随后 **构建与发版相同的 Docker 镜像但不推送**。推送 **`v*`** 标签触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)：同样测试后，将 **多平台静态二进制** 与 **SHA256SUMS** 挂到 GitHub Release，并将镜像推送到 **GHCR**。
 
 产品设计类长篇文档**不随本仓库分发**；行为以**代码**及上文**公开**链接为准。
+
+## 参与贡献
+
+范围与产品边界（统一运维面、Tier A/B/C、Anti-goals、PR 前自检）见 **[CONTRIBUTING.md](CONTRIBUTING.md)**（英文，便于国际贡献者对齐）。
 
 ## 许可证
 

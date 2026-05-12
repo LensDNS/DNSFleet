@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -20,12 +23,30 @@ import (
 )
 
 func main() {
+	exe := filepath.Base(os.Args[0])
+	flag.Usage = func() {
+		out := flag.CommandLine.Output()
+		fmt.Fprintf(out, "%s — self-hosted control plane for AdGuard Home fleets.\n\n", exe)
+		fmt.Fprintf(out, "Optional flags (non-empty values override configuration fields after values are read from the environment):\n")
+		fmt.Fprintf(out, "  -admin-token   Admin shared secret; overrides DNSFLEET_ADMIN_TOKEN.\n")
+		fmt.Fprintf(out, "  -listen        HTTP listen address; overrides DNSFLEET_HTTP_ADDR (env default :8080).\n")
+		fmt.Fprintf(out, "\nOther settings use environment variables only; see README \"Configuration\".\n")
+		fmt.Fprintf(out, "On Unix, command-line arguments may be visible in ps(1); prefer env or a secret manager on shared systems.\n\n")
+		fmt.Fprintf(out, "Usage of %s:\n", exe)
+		flag.PrintDefaults()
+	}
+
+	adminToken := flag.String("admin-token", "", "overrides DNSFLEET_ADMIN_TOKEN (empty = use env only)")
+	listen := flag.String("listen", "", "overrides DNSFLEET_HTTP_ADDR (empty = use env / default :8080)")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	config.ApplyLaunchOverrides(&cfg, *adminToken, *listen)
 	if !cfg.AdminInsecureDisable && cfg.AdminToken == "" {
-		log.Fatalf("DNSFLEET_ADMIN_TOKEN is required unless DNSFLEET_ADMIN_INSECURE_DISABLE=1")
+		log.Fatalf("admin token required: set DNSFLEET_ADMIN_TOKEN or pass -admin-token, or set DNSFLEET_ADMIN_INSECURE_DISABLE=1")
 	}
 
 	gormDB, err := fleetdb.OpenAndMigrate(cfg.DBPath)
