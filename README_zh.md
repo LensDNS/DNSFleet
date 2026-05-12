@@ -53,20 +53,20 @@
 
 `dnsfleet-<标签>-<系统>-<架构>[.exe]`
 
-- **`<标签>`**：Git 标签，例如 **`v0.1.1`**。
+- **`<标签>`**：该次 Release 在 GitHub 上对应的 Git 标签。
 - **`<系统>`**：`linux`、`windows`、`darwin`。
 - **`<架构>`**：`amd64` 或 `arm64`。
 - **`.exe`**：仅 Windows。
 
-示例（请换成你实际下载的版本号）：
+**版本占位符：** 下表与下文 shell 示例中的 **`vX.Y.Z` 仅为占位符**，请替换为你所下载 Release 的 **真实 Git 标签**（例如 **`v0.2.0`**）。
 
 | 系统 / 架构 | 示例文件名 |
 |-------------|------------|
-| Windows amd64 | `dnsfleet-v0.1.1-windows-amd64.exe` |
-| Linux amd64 | `dnsfleet-v0.1.1-linux-amd64` |
-| Linux arm64 | `dnsfleet-v0.1.1-linux-arm64` |
-| macOS amd64（Intel） | `dnsfleet-v0.1.1-darwin-amd64` |
-| macOS arm64（Apple Silicon） | `dnsfleet-v0.1.1-darwin-arm64` |
+| Windows amd64 | `dnsfleet-vX.Y.Z-windows-amd64.exe` |
+| Linux amd64 | `dnsfleet-vX.Y.Z-linux-amd64` |
+| Linux arm64 | `dnsfleet-vX.Y.Z-linux-arm64` |
+| macOS amd64（Intel） | `dnsfleet-vX.Y.Z-darwin-amd64` |
+| macOS arm64（Apple Silicon） | `dnsfleet-vX.Y.Z-darwin-arm64` |
 
 请用同一次 Release 里的 **`SHA256SUMS`** 校验下载文件。
 
@@ -77,9 +77,9 @@
 **Linux / macOS**（在二进制所在目录）：
 
 ```bash
-chmod +x dnsfleet-v0.1.1-linux-amd64   # 以 Linux 为例；macOS 若已可执行可省略
+chmod +x dnsfleet-vX.Y.Z-linux-amd64   # 以 Linux 为例；macOS 若已可执行可省略
 export DNSFLEET_ADMIN_TOKEN='你的长随机密钥'
-./dnsfleet-v0.1.1-linux-amd64
+./dnsfleet-vX.Y.Z-linux-amd64
 ```
 
 **Windows（PowerShell）**：
@@ -87,17 +87,17 @@ export DNSFLEET_ADMIN_TOKEN='你的长随机密钥'
 ```powershell
 cd ~\Downloads   # 或你保存 exe 的目录
 $env:DNSFLEET_ADMIN_TOKEN='你的长随机密钥'
-.\dnsfleet-v0.1.1-windows-amd64.exe
+.\dnsfleet-vX.Y.Z-windows-amd64.exe
 ```
 
 **不想先设环境变量时，可用 flag 首次启动**（见下安全提示）：
 
 ```bash
-./dnsfleet-v0.1.1-linux-amd64 -admin-token '你的长随机密钥'
+./dnsfleet-vX.Y.Z-linux-amd64 -admin-token '你的长随机密钥'
 ```
 
 ```powershell
-.\dnsfleet-v0.1.1-windows-amd64.exe -admin-token '你的长随机密钥'
+.\dnsfleet-vX.Y.Z-windows-amd64.exe -admin-token '你的长随机密钥'
 ```
 
 监听地址可选 **`-listen :8081`**（覆盖 **`DNSFLEET_HTTP_ADDR`**；若环境变量未设置，默认仍为 **`:8080`**）。
@@ -121,7 +121,7 @@ $env:DNSFLEET_ADMIN_TOKEN='你的长随机密钥'
 3. **`.env` + shell** — 复制 [`.env.example`](.env.example) 为 **`.env`**，编辑 **`DNSFLEET_ADMIN_TOKEN`**，在 **bash** 中：
 
    ```bash
-   set -a && source .env && set +a && ./dnsfleet-v0.1.1-linux-amd64
+   set -a && source .env && set +a && ./dnsfleet-vX.Y.Z-linux-amd64
    ```
 
    （本质仍是注入环境变量，只是密钥写在文件里更好改。）
@@ -136,7 +136,7 @@ $env:DNSFLEET_ADMIN_TOKEN='你的长随机密钥'
 docker run --rm \
   -e DNSFLEET_ADMIN_TOKEN=你的长随机密钥 \
   -p 8080:8080 \
-  ghcr.io/lensdns/dnsfleet:v0.1.1
+  ghcr.io/lensdns/dnsfleet:vX.Y.Z
 ```
 
 SQLite 持久化到卷（容器内路径需可写，见 [`deploy/README.md`](deploy/README.md)）：
@@ -147,7 +147,7 @@ docker run --rm \
   -e DNSFLEET_DB_PATH=/data/dnsfleet.db \
   -p 8080:8080 \
   -v dnsfleet-data:/data \
-  ghcr.io/lensdns/dnsfleet:v0.1.1
+  ghcr.io/lensdns/dnsfleet:vX.Y.Z
 ```
 
 ## 快速开始（从源码构建）

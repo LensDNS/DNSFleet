@@ -55,20 +55,20 @@ Each archive or standalone file follows:
 
 `dnsfleet-<tag>-<os>-<arch>[.exe]`
 
-- **`<tag>`** is the Git tag (for example **`v0.1.1`**).
+- **`<tag>`** is the Git tag for that release (see the release page on GitHub).
 - **`<os>`** is `linux`, `windows`, or `darwin`.
 - **`<arch>`** is `amd64` or `arm64`.
 - **`.exe`** is only on Windows.
 
-Examples (replace the version with the one you downloaded):
+**Version placeholder:** In the table and shell examples below, **`vX.Y.Z` is a placeholder** — replace it with the **actual Git tag** from the release you downloaded (for example **`v0.2.0`**).
 
 | OS / arch | Example filename |
 |-----------|------------------|
-| Windows amd64 | `dnsfleet-v0.1.1-windows-amd64.exe` |
-| Linux amd64 | `dnsfleet-v0.1.1-linux-amd64` |
-| Linux arm64 | `dnsfleet-v0.1.1-linux-arm64` |
-| macOS amd64 (Intel) | `dnsfleet-v0.1.1-darwin-amd64` |
-| macOS arm64 (Apple Silicon) | `dnsfleet-v0.1.1-darwin-arm64` |
+| Windows amd64 | `dnsfleet-vX.Y.Z-windows-amd64.exe` |
+| Linux amd64 | `dnsfleet-vX.Y.Z-linux-amd64` |
+| Linux arm64 | `dnsfleet-vX.Y.Z-linux-arm64` |
+| macOS amd64 (Intel) | `dnsfleet-vX.Y.Z-darwin-amd64` |
+| macOS arm64 (Apple Silicon) | `dnsfleet-vX.Y.Z-darwin-arm64` |
 
 Verify downloads with **`SHA256SUMS`** from the same release.
 
@@ -81,9 +81,9 @@ The process reads **environment variables** first (see [Configuration](#configur
 **Linux / macOS** (from the directory containing the binary):
 
 ```bash
-chmod +x dnsfleet-v0.1.1-linux-amd64   # Linux example; skip on macOS if already executable
+chmod +x dnsfleet-vX.Y.Z-linux-amd64   # Linux example; skip on macOS if already executable
 export DNSFLEET_ADMIN_TOKEN='your-long-random-secret'
-./dnsfleet-v0.1.1-linux-amd64
+./dnsfleet-vX.Y.Z-linux-amd64
 ```
 
 **Windows (PowerShell)**:
@@ -91,17 +91,17 @@ export DNSFLEET_ADMIN_TOKEN='your-long-random-secret'
 ```powershell
 cd ~\Downloads   # or wherever you saved the file
 $env:DNSFLEET_ADMIN_TOKEN='your-long-random-secret'
-.\dnsfleet-v0.1.1-windows-amd64.exe
+.\dnsfleet-vX.Y.Z-windows-amd64.exe
 ```
 
 **Same examples with a flag instead of `export` / `$env:`** (handy for a first run; see security note below):
 
 ```bash
-./dnsfleet-v0.1.1-linux-amd64 -admin-token 'your-long-random-secret'
+./dnsfleet-vX.Y.Z-linux-amd64 -admin-token 'your-long-random-secret'
 ```
 
 ```powershell
-.\dnsfleet-v0.1.1-windows-amd64.exe -admin-token 'your-long-random-secret'
+.\dnsfleet-vX.Y.Z-windows-amd64.exe -admin-token 'your-long-random-secret'
 ```
 
 Optional listen override: **`-listen :8081`** (overrides **`DNSFLEET_HTTP_ADDR`**; when the env var is unset, the default remains **`:8080`**).
@@ -125,7 +125,7 @@ Typing `export` / `$env:...` each time is normal for servers but annoying on a l
 3. **`.env` + shell** — copy [`.env.example`](.env.example) to **`.env`**, edit **`DNSFLEET_ADMIN_TOKEN`**, then in **bash**:
 
    ```bash
-   set -a && source .env && set +a && ./dnsfleet-v0.1.1-linux-amd64
+   set -a && source .env && set +a && ./dnsfleet-vX.Y.Z-linux-amd64
    ```
 
    (Still environment variables under the hood; the file is just easier to edit than a long one-liner.)
@@ -140,7 +140,7 @@ Use the image tag published with the release (example org/repo; confirm on the r
 docker run --rm \
   -e DNSFLEET_ADMIN_TOKEN=your-long-random-secret \
   -p 8080:8080 \
-  ghcr.io/lensdns/dnsfleet:v0.1.1
+  ghcr.io/lensdns/dnsfleet:vX.Y.Z
 ```
 
 Persist SQLite in a volume (path inside the container must be writable; see [`deploy/README.md`](deploy/README.md)):
@@ -151,7 +151,7 @@ docker run --rm \
   -e DNSFLEET_DB_PATH=/data/dnsfleet.db \
   -p 8080:8080 \
   -v dnsfleet-data:/data \
-  ghcr.io/lensdns/dnsfleet:v0.1.1
+  ghcr.io/lensdns/dnsfleet:vX.Y.Z
 ```
 
 ## Quick start (build from source)

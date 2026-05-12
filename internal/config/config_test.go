@@ -254,6 +254,77 @@ func TestApplyLaunchOverrides(t *testing.T) {
 	}
 }
 
+func TestValidateStartupAdmin(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{
+			name: "insecure disable allows empty token",
+			cfg: Config{
+				AdminInsecureDisable: true,
+				AdminToken:           "",
+			},
+			wantErr: false,
+		},
+		{
+			name: "token set ok",
+			cfg: Config{
+				AdminInsecureDisable: false,
+				AdminToken:           "secret",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing token when secure",
+			cfg: Config{
+				AdminInsecureDisable: false,
+				AdminToken:           "",
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateStartupAdmin(&tc.cfg)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateStartupAdmin_nil(t *testing.T) {
+	err := ValidateStartupAdmin(nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestValidateStartupAdmin_afterOverrides(t *testing.T) {
+	cfg := Config{
+		AdminInsecureDisable: false,
+		AdminToken:           "from-env",
+	}
+	ApplyLaunchOverrides(&cfg, "   ", "")
+	if err := ValidateStartupAdmin(&cfg); err != nil {
+		t.Fatalf("whitespace-only flag must not clear token: %v", err)
+	}
+
+	cfg2 := Config{
+		AdminInsecureDisable: false,
+		AdminToken:           "",
+	}
+	ApplyLaunchOverrides(&cfg2, "cli", "")
+	if err := ValidateStartupAdmin(&cfg2); err != nil {
+		t.Fatalf("cli override should satisfy gate: %v", err)
+	}
+}
+
 func TestLoad_RejectsInMemoryDSN(t *testing.T) {
 	t.Setenv(envHTTPAddr, "")
 
