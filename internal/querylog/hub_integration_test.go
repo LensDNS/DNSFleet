@@ -433,3 +433,104 @@ func TestHub_ctx_cancel_shutdown(t *testing.T) {
 		t.Fatal("expected ReadMessage error after hub ctx cancel (connection closed)")
 	}
 }
+
+// TestHub_warm_replay_second_session_no_duplicate_fanout covers Phase A (no clearTailState on last Unregister)
+// plus warm ring + persisted dedupe on reconnect. Phase B plan §4 (replay before subs): when warm is
+// non-empty, the first type=log on sub.out after connected is replay; when warm is empty, the first log
+// is live after registration. Register adds subs only after replayWarmToSubscriber; no coordinator/register
+// race test is required for that property (see comment on Hub.Register).
+func TestHub_warm_replay_second_session_no_duplicate_fanout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	db := openTestDB(t)
+	ad := mockAdGuard(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/control/querylog/config":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(queryLogConfigJSON(true)))
+		case "/control/querylog":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"oldest":"","data":[{"dup":true},{"dup":true}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	insertOnlineNode(t, db, "n1", ad.URL)
+
+	cfg := integrationHubCfg()
+	hub := NewHub(ctx, db, cfg)
+	wsURL := startHubWSServer(t, hub)
+
+	conn1 := dialWS(t, wsURL, nil)
+	deadline := time.Now().Add(4 * time.Second)
+	logs1 := 0
+	for time.Now().Before(deadline) {
+		chunk := time.Until(deadline)
+		if chunk > 2*time.Second {
+			chunk = 2 * time.Second
+		}
+		if chunk < 1*time.Millisecond {
+			break
+		}
+		_ = conn1.SetReadDeadline(time.Now().Add(chunk))
+		_, data, err := conn1.ReadMessage()
+		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				continue
+			}
+			t.Fatalf("conn1 read: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("invalid json: %q", data)
+		}
+		if m["type"] == "log" {
+			logs1++
+			if fp, ok := m["fingerprint"].(string); !ok || fp == "" {
+				t.Fatalf("expected fingerprint on log frame, got %#v", m)
+			}
+			break
+		}
+	}
+	if logs1 != 1 {
+		t.Fatalf("first session: want 1 log after dedupe, got %d", logs1)
+	}
+	_ = conn1.Close()
+	time.Sleep(400 * time.Millisecond)
+
+	conn2 := dialWS(t, wsURL, nil)
+	deadline2 := time.Now().Add(4 * time.Second)
+	logs2 := 0
+	for time.Now().Before(deadline2) {
+		chunk := time.Until(deadline2)
+		if chunk > 2*time.Second {
+			chunk = 2 * time.Second
+		}
+		if chunk < 1*time.Millisecond {
+			break
+		}
+		_ = conn2.SetReadDeadline(time.Now().Add(chunk))
+		_, data, err := conn2.ReadMessage()
+		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				continue
+			}
+			t.Fatalf("conn2 read: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("invalid json: %q", data)
+		}
+		if m["type"] == "log" {
+			logs2++
+			break
+		}
+	}
+	if logs2 != 1 {
+		t.Fatalf("second session: want exactly 1 log (warm replay only; poll dedupes), got %d", logs2)
+	}
+	_ = conn2.Close()
+}

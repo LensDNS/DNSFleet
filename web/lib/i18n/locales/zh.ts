@@ -98,6 +98,11 @@ export const zh: Record<LocaleKey, string> = {
   "liveLogs.riskNotice":
     "风险提示：实时日志经同源 WebSocket；有 Admin 时 token 可能出现在 Query 中（勿分享链接、勿在生产依赖裸 Query）。自动重连采用指数退避（上限 30s）。首屏与滚底经 REST 拉取历史，WS 推送增量；列表按时间新在上。",
   "liveLogs.connectionStatus": "连接状态：{status}（合并最多 {max} 条）",
+  "liveLogs.operatorSummary": "{status} · 最近一条 {lastLog} · 重连计数 {attempt} · 近期系统 {events}",
+  "liveLogs.multiTabHint":
+    "近期有其他「实时日志」标签页在连接；每个标签页会各自建立 WebSocket（多标签常驻会增加上游轮询）。",
+  "liveLogs.mergeReorderNote":
+    "合并顺序：相邻 entry 时间相差约 1.5 秒以内时，可能按到达先后显示，而非严格墙钟序列。",
   "liveLogs.systemMessages": "系统消息",
   "liveLogs.systemEmpty": "（暂无）",
   "liveLogs.col.time": "时间",

@@ -33,6 +33,8 @@ import {
   type ResultKind,
 } from "@/lib/query-log-display";
 import {
+  isWsFingerprintHex,
+  logRowDedupeKeyFromWsFingerprint,
   logRowDedupeKeyHex,
   MAX_MERGED_LOG_LINES,
   mergeNewestFirstDedupeIncremental,
@@ -46,6 +48,9 @@ import { interpolate } from "@/lib/i18n/resolve-message";
 import { cn } from "@/lib/utils";
 
 const MAX_SYSTEM = 100;
+
+/** sessionStorage: another tab may have opened WS recently (multi-tab awareness; each tab still connects). */
+const LIVE_LOGS_TAB_ACTIVE_KEY = "dnsfleet.liveLogs.wsActiveAt";
 
 type LogRow = {
   kind: "log";
@@ -84,13 +89,40 @@ function snapshotLogRow(row: LogRow): LogRow {
   };
 }
 
+function buildLogRowSync(
+  nodeId: number,
+  nodeName: string,
+  entry: Record<string, unknown>,
+  receivedAt: number,
+  fingerprint: string,
+): LogRow {
+  const dedupeKey = logRowDedupeKeyFromWsFingerprint(nodeId, fingerprint);
+  return {
+    kind: "log",
+    key: dedupeKey,
+    dedupeKey,
+    timeMs: entryTimeToMs(entry.time, receivedAt),
+    receivedAt,
+    nodeId,
+    nodeName,
+    entry: { ...entry },
+    normalized: normalizeEntry(entry),
+    resultKind: inferResultKind(entry),
+    slowQuery: isSlowQuery(entry),
+  };
+}
+
 async function buildLogRow(
   nodeId: number,
   nodeName: string,
   entry: Record<string, unknown>,
   receivedAt: number,
+  fingerprint?: string,
 ): Promise<LogRow> {
-  const dedupeKey = await logRowDedupeKeyHex(nodeId, entry);
+  const dedupeKey =
+    fingerprint !== undefined && isWsFingerprintHex(fingerprint)
+      ? logRowDedupeKeyFromWsFingerprint(nodeId, fingerprint)
+      : await logRowDedupeKeyHex(nodeId, entry);
   return {
     kind: "log",
     key: dedupeKey,
@@ -108,9 +140,15 @@ async function buildLogRow(
 
 export default function LiveLogsPage() {
   const { t, locale } = useLocale();
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
   const [logRows, setLogRows] = useState<LogRow[]>([]);
   const [systemLines, setSystemLines] = useState<SystemLine[]>([]);
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed">("idle");
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [multiTabHint, setMultiTabHint] = useState(false);
   const [detail, setDetail] = useState<LogRow | null>(null);
   const [initialLoad, setInitialLoad] = useState<"loading" | "ready">("loading");
   const [nodeTails, setNodeTails] = useState<Record<number, NodeTailState>>({});
@@ -132,7 +170,13 @@ export default function LiveLogsPage() {
   const wasAwayFromBottom = useRef(false);
   const pageSession = useRef(0);
   const pendingWsEntries = useRef<
-    { nodeId: number; nodeName: string; entry: Record<string, unknown>; receivedAt: number }[]
+    {
+      nodeId: number;
+      nodeName: string;
+      entry: Record<string, unknown>;
+      receivedAt: number;
+      fingerprint?: string;
+    }[]
   >([]);
   const wsFlushRaf = useRef<number | null>(null);
 
@@ -246,7 +290,7 @@ export default function LiveLogsPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg !== "AbortError" && !msg.includes("aborted")) {
-        toast.warning(`${t("liveLogs.toast.loadOlderFailed")} ${msg}`);
+        toast.warning(`${tRef.current("liveLogs.toast.loadOlderFailed")} ${msg}`);
       }
     } finally {
       globalOlderBusy.current = false;
@@ -255,7 +299,7 @@ export default function LiveLogsPage() {
       }
       olderInFlight.current.delete(pickedNodeId);
     }
-  }, [t]);
+  }, []);
 
   const onTableScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -361,7 +405,7 @@ export default function LiveLogsPage() {
             const err = r.reason;
             if (err instanceof Error && err.message.includes("aborted")) continue;
             const msg = err instanceof Error ? err.message : String(err);
-            toast.warning(`${t("liveLogs.toast.firstPageWarn")} ${msg}`);
+            toast.warning(`${tRef.current("liveLogs.toast.firstPageWarn")} ${msg}`);
             continue;
           }
           const { node, ql } = r.value;
@@ -383,7 +427,7 @@ export default function LiveLogsPage() {
       } catch (e) {
         if (gen !== fetchGen.current) return;
         const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.includes("aborted")) toast.error(`${t("liveLogs.toast.nodesLoadFailed")} ${msg}`);
+        if (!msg.includes("aborted")) toast.error(`${tRef.current("liveLogs.toast.nodesLoadFailed")} ${msg}`);
       } finally {
         if (gen === fetchGen.current) setInitialLoad("ready");
       }
@@ -392,7 +436,7 @@ export default function LiveLogsPage() {
     return () => {
       ac.abort();
     };
-  }, [t]);
+  }, [locale]);
 
   useEffect(() => {
     const built = buildLogsWebSocketUrl();
@@ -400,7 +444,7 @@ export default function LiveLogsPage() {
       if (!warnedNoUrl.current && !isSkipAdminAuth()) {
         warnedNoUrl.current = true;
         void Promise.resolve().then(() => {
-          toast.error(t("liveLogs.toast.noWsToken"));
+          toast.error(tRef.current("liveLogs.toast.noWsToken"));
           setStatus("idle");
         });
       }
@@ -419,10 +463,65 @@ export default function LiveLogsPage() {
       const base = 1000;
       const delay = Math.min(maxMs, base * 2 ** Math.min(attempt, 5));
       attempt += 1;
+      setReconnectAttempt(attempt);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connect();
       }, delay);
+    }
+
+    function applyWsMerged(merged: LogRow[]) {
+      if (cancelled) return;
+      logRowsRef.current = merged;
+      setLogRows(merged);
+      queueMicrotask(() => setPausedDeep(recomputePausedDeep(merged)));
+    }
+
+    /** Cancel rAF first; drain queue: fingerprint rows merge synchronously, remainder one async batch. */
+    function flushPendingOnDisconnect() {
+      const batch = pendingWsEntries.current.splice(0);
+      if (batch.length === 0) return;
+      const syncBuilt: LogRow[] = [];
+      const asyncRemainder: typeof batch = [];
+      for (const item of batch) {
+        if (item.fingerprint !== undefined && isWsFingerprintHex(item.fingerprint)) {
+          try {
+            syncBuilt.push(
+              buildLogRowSync(item.nodeId, item.nodeName, item.entry, item.receivedAt, item.fingerprint),
+            );
+          } catch {
+            // skip malformed
+          }
+        } else {
+          asyncRemainder.push(item);
+        }
+      }
+      if (syncBuilt.length > 0) {
+        const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, syncBuilt);
+        applyWsMerged(merged);
+      }
+      if (asyncRemainder.length === 0) return;
+      void (async () => {
+        const built: LogRow[] = [];
+        for (const item of asyncRemainder) {
+          try {
+            built.push(
+              await buildLogRow(
+                item.nodeId,
+                item.nodeName,
+                item.entry,
+                item.receivedAt,
+                item.fingerprint,
+              ),
+            );
+          } catch {
+            // skip one malformed row
+          }
+        }
+        if (cancelled || built.length === 0) return;
+        const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, built);
+        applyWsMerged(merged);
+      })();
     }
 
     function flushWsPending() {
@@ -433,7 +532,13 @@ export default function LiveLogsPage() {
         for (const item of batch) {
           try {
             built.push(
-              await buildLogRow(item.nodeId, item.nodeName, item.entry, item.receivedAt),
+              await buildLogRow(
+                item.nodeId,
+                item.nodeName,
+                item.entry,
+                item.receivedAt,
+                item.fingerprint,
+              ),
             );
           } catch {
             // skip one malformed row
@@ -441,9 +546,7 @@ export default function LiveLogsPage() {
         }
         if (cancelled || built.length === 0) return;
         const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, built);
-        logRowsRef.current = merged;
-        setLogRows(merged);
-        queueMicrotask(() => setPausedDeep(recomputePausedDeep(merged)));
+        applyWsMerged(merged);
       })();
     }
 
@@ -465,7 +568,21 @@ export default function LiveLogsPage() {
       socket.onopen = () => {
         if (cancelled) return;
         attempt = 0;
+        setReconnectAttempt(0);
         setStatus("open");
+        try {
+          const now = Date.now();
+          const raw = sessionStorage.getItem(LIVE_LOGS_TAB_ACTIVE_KEY);
+          if (raw) {
+            const prev = Number(raw);
+            if (Number.isFinite(prev) && now - prev < 8000 && now - prev > 30) {
+              setMultiTabHint(true);
+            }
+          }
+          sessionStorage.setItem(LIVE_LOGS_TAB_ACTIVE_KEY, String(now));
+        } catch {
+          // ignore private mode / quota
+        }
       };
 
       socket.onmessage = (ev) => {
@@ -503,13 +620,19 @@ export default function LiveLogsPage() {
           const nodeId =
             typeof msg.node_id === "number" && Number.isFinite(msg.node_id) ? msg.node_id : 0;
           const nodeName = typeof msg.node_name === "string" ? msg.node_name : "";
-          pendingWsEntries.current.push({ nodeId, nodeName, entry, receivedAt });
+          const fingerprint = typeof msg.fingerprint === "string" ? msg.fingerprint : undefined;
+          pendingWsEntries.current.push({ nodeId, nodeName, entry, receivedAt, fingerprint });
           scheduleWsFlush();
         }
       };
 
       socket.onerror = () => {
         if (cancelled) return;
+        if (wsFlushRaf.current != null) {
+          cancelAnimationFrame(wsFlushRaf.current);
+          wsFlushRaf.current = null;
+        }
+        flushPendingOnDisconnect();
         setStatus("closed");
       };
 
@@ -519,8 +642,7 @@ export default function LiveLogsPage() {
           cancelAnimationFrame(wsFlushRaf.current);
           wsFlushRaf.current = null;
         }
-        // Drop queued payloads without a final flush (at most one rAF batch). Reconnect resumes tail; v0.1 accepts this loss.
-        pendingWsEntries.current = [];
+        flushPendingOnDisconnect();
         if (cancelled) return;
         setStatus("closed");
         scheduleReconnect();
@@ -530,20 +652,47 @@ export default function LiveLogsPage() {
     connect();
 
     return () => {
-      cancelled = true;
       if (wsFlushRaf.current != null) {
         cancelAnimationFrame(wsFlushRaf.current);
         wsFlushRaf.current = null;
       }
-      // Unmount: same as onclose — discard pending WS queue (no flush-to-state).
-      pendingWsEntries.current = [];
+      flushPendingOnDisconnect();
+      cancelled = true;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       if (ws) {
         ws.onclose = null;
         ws.close();
       }
     };
-  }, [t]);
+  }, [locale]);
+
+  const operatorSummary = useMemo(() => {
+    const last = logRows[0];
+    const lastLog = last ? formatDisplayTime(last.entry.time, last.receivedAt, locale) : "—";
+    const tail = systemLines.slice(-20);
+    const counts = new Map<string, number>();
+    for (const ln of tail) {
+      counts.set(ln.event, (counts.get(ln.event) ?? 0) + 1);
+    }
+    const parts: string[] = [];
+    for (const k of [
+      "backpressure_drop",
+      "upstream_error",
+      "upstream_warn",
+      "frame_too_large",
+      "querylog_disabled",
+    ]) {
+      const n = counts.get(k);
+      if (n) parts.push(`${k}×${n}`);
+    }
+    const events = parts.length > 0 ? parts.join(", ") : "—";
+    return interpolate(t("liveLogs.operatorSummary"), {
+      status,
+      lastLog,
+      attempt: reconnectAttempt,
+      events,
+    });
+  }, [systemLines, logRows, status, reconnectAttempt, locale, t]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -558,6 +707,11 @@ export default function LiveLogsPage() {
             max: MAX_MERGED_LOG_LINES,
           })}
         </p>
+        <p className="text-muted-foreground mt-1 text-xs font-mono leading-snug">{operatorSummary}</p>
+        {multiTabHint ? (
+          <p className="text-muted-foreground mt-0.5 text-xs">{t("liveLogs.multiTabHint")}</p>
+        ) : null}
+        <p className="text-muted-foreground mt-0.5 text-[11px] leading-snug">{t("liveLogs.mergeReorderNote")}</p>
       </div>
 
       <section aria-label={t("liveLogs.systemMessages")} className="shrink-0 rounded-md border border-border bg-muted/20">

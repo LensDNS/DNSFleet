@@ -96,6 +96,11 @@ export const en = {
   "liveLogs.riskNotice":
     "Risk: live logs use same-origin WebSocket; with Admin auth the token may appear in the query string (do not share links; do not rely on bare Query in production). Reconnect uses exponential backoff (max 30s). First screen and scroll paging load history via REST; WS delivers increments; list is newest-first by time.",
   "liveLogs.connectionStatus": "Connection: {status} (merged up to {max} rows)",
+  "liveLogs.operatorSummary": "{status} · last log {lastLog} · reconnect count {attempt} · recent system {events}",
+  "liveLogs.multiTabHint":
+    "Another Live Logs tab connected recently; each tab opens its own WebSocket (multiple open tabs increase upstream polling).",
+  "liveLogs.mergeReorderNote":
+    "Merge order: when entry times are within about 1.5s, rows may follow arrival order instead of strict wall-clock order.",
   "liveLogs.systemMessages": "System messages",
   "liveLogs.systemEmpty": "(none)",
   "liveLogs.col.time": "Time",

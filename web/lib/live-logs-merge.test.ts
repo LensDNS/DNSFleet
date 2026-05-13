@@ -85,6 +85,16 @@ describe("mergeNewestFirstDedupeIncremental", () => {
     const m = mergeNewestFirstDedupeIncremental(prev, incoming);
     expect(m.length).toBe(MAX_MERGED_LOG_LINES);
   });
+
+  it("within time skew orders by receivedAt (newer delivery first)", () => {
+    const prev: R[] = [{ timeMs: 1000, nodeId: 1, dedupeKey: "p", receivedAt: 10 }];
+    const incoming: R[] = [
+      { timeMs: 1005, nodeId: 1, dedupeKey: "b", receivedAt: 50 },
+      { timeMs: 1000, nodeId: 1, dedupeKey: "a", receivedAt: 100 },
+    ];
+    const m = mergeNewestFirstDedupeIncremental(prev, incoming);
+    expect(m.map((x) => x.dedupeKey).join(",")).toBe("a,b,p");
+  });
 });
 
 describe("recomputePausedDeep", () => {

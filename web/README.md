@@ -77,6 +77,8 @@ Under rewrites, open the WebSocket against the **same host as the page**, path *
 
 Auth: 原生浏览器 WS 往往只能用 Query **`token=`**（与 API 文档一致；Referrer / 代理 access log 风险见 `api/DNSFLEET_HTTP_API.md`）。**`NEXT_PUBLIC_DNSFLEET_SKIP_ADMIN_AUTH=1`** 时 **不得**附加 `token=`，与后端 insecure 成对。
 
+**生产安全（钉死现状）**：`internal/httpapi/ws_logs.go` 中 WebSocket **`CheckOrigin` 当前恒为允许**（便于本地开发）。面向公网或不可信浏览器源时，须由 **反向代理限制 Origin**、**同源站点 + WSS**、或后续版本在代码侧收紧；**勿**在裸公网依赖「任意 Origin 可连 + URL 带 Admin token」的组合。
+
 ### WS smoke (before Step 6 UI)
 
 After `npm run dev` + control plane up, verify **101** on the proxied URL. If **dev** (e.g. Turbopack) behaves oddly but **`npm run build && npm run start`** works, note that for troubleshooting (not a CI gate).
@@ -114,7 +116,17 @@ npm run lint     # eslint
 | `/desired-state` | 全局期望 upstream / rewrite |
 | `/live-logs` | **REST 首屏 + 滚底** `GET /nodes/:id/querylog`（`older_than`）与 **WebSocket** 尾包合并；按时间新在上 |
 
-**Live Logs 页面**：对 **在线节点** 并行拉首屏 querylog，列表 **按 `entry.time` 降序**（最多 500 条，丢最旧）；滚到底继续 **`older_than`** 分页；若列表高度不足视口会自动追加载直至可滚动或耗尽。多节点 **时间差过大** 时暂停某节点的深翻；**SHA-256**（`node_id` + `JSON.stringify(entry)`）去重 REST 与 WS。表格五列摘要；侧栏 **结构化完整响应**（`question` / `answer` RR / `rules` / `client_info` / `client_proto` 等）+ 底部 **原始 `entry` JSON**。结果行语义色与优先级见 `lib/query-log-display.ts`（`inferResultKind` 等）；`npm test` 含摘要、`entryDetailSections` 与 `lib/live-logs-merge.ts`。
+**Live Logs 页面**：对 **在线节点** 并行拉首屏 querylog，列表 **以 `entry.time` 为主序**（最多 500 条，丢最旧）；WS 增量合并时 **约 1.5s** 内相邻行可能按到达先后微调（见 `lib/live-logs-merge.ts` 的 `WS_TIME_REORDER_SKEW_MS`）；服务端在 `type=log` 上可选带 **`fingerprint`**（与 Hub 去重键一致）时，断开/关闭路径可将该批行 **同步合并进当前页的表格列表状态**（React state，**非**控制面 SQLite 或其它持久化）。滚到底继续 **`older_than`** 分页；若列表高度不足视口会自动追加载直至可滚动或耗尽。多节点 **时间差过大** 时暂停某节点的深翻；REST 行用 **SHA-256**（`node_id` + `JSON.stringify(entry)`）去重，WS 行优先 **fingerprint** 键。表格五列摘要；侧栏 **结构化完整响应**（`question` / `answer` RR / `rules` / `client_info` / `client_proto` 等）+ 底部 **原始 `entry` JSON**。结果行语义色与优先级见 `lib/query-log-display.ts`（`inferResultKind` 等）；`npm test` 含摘要、`entryDetailSections` 与 `lib/live-logs-merge.ts`。
+
+**界面语言与 Live Logs**：切换 **locale**（中/英）时，该页会 **中止首屏 REST** 并 **关闭并重连 WebSocket**（`useEffect` 依赖 `locale`），等效于整页数据面重绑；若仅需换文案而不重拉日志，需在后续迭代收窄 effect 依赖（当前属预期行为，勿当断线 bug）。
+
+**多标签页**：每个浏览器标签页 **各自** 建立到 `/api/v1/ws/logs` 的 WebSocket（Hub 按连接 fan-out）；页面上的多 tab 提示仅基于 **sessionStorage** 时间戳，**不**合并为单连接（非 BroadcastChannel leader 方案）。
+
+**Live Logs 断开路径与 fingerprint**：关闭 WebSocket、断网或离开页面时，**仅带合法 `fingerprint` 的**待处理 WS 行可走 **同步**路径合并进表格状态；**无** `fingerprint`（或非法）的行仍走 **异步** `buildLogRow`，若在 `cancelled` 之后才完成则 **不会**写入列表——关 tab / 断线瞬间仍可能 **少几行尾部**；不能接受则须扩展同步键或保证上游始终下发 `fingerprint`。`onerror` 与 `onclose` 可能各触发一次 drain：首次 `splice` 已清空时第二次为空，**无**重复合并问题。
+
+**合并与性能**：`mergeNewestFirstDedupeIncremental` 对每批在 **最多 500 行** 上做一次带时间 skew 的 **全量排序**（`MAX_MERGED_LOG_LINES`）；通常足够轻，极端高频 WS + 长会话时可在 Performance 面板关注主线程排序成本，再考虑分段归并或限制每帧入队条数。
+
+**Hub warm 语义**：控制面 warm ring 为 **全局最近** 有限条 **`log`** 的聚合缓冲，**不是**每节点独立完整 tail；与 per-node `nodeTail` 去重映射是两套边界——运维上可接受，但 **勿**将「重连 warm」理解为「恢复每节点全部未读历史」。
 
 **Hub 尾包 vs REST 条数**：控制面 Hub 单页 `limit` 由环境变量 `DNSFLEET_QUERYLOG_PAGE_LIMIT`（常见 100）决定；浏览器 REST 历史分页默认 `limit=20`。合并列表上条数不必一致，**不是 bug**；详见仓库根 `README.md` 配置表。
 

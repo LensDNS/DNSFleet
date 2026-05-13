@@ -4,16 +4,45 @@ export const MAX_MERGED_LOG_LINES = 500;
 /** If a node's newest row is still this far behind the global oldest row, pause its `older_than` chain. */
 export const NODE_DEEP_PAUSE_GAP_MS = 3600 * 1000;
 
+/**
+ * When two rows' `entry.time` differ by at most this many ms, merge treats them as the same time band
+ * and orders by `receivedAt` (newest delivery first) before node/dedupe tie-breaks — not strict wall-clock order.
+ */
+export const WS_TIME_REORDER_SKEW_MS = 1500;
+
+/** Dedupe key when server sends `fingerprint` (SHA-256 hex of upstream entry JSON bytes); scoped by node. */
+export function logRowDedupeKeyFromWsFingerprint(nodeId: number, fingerprint: string): string {
+  return `${nodeId}\n${fingerprint}`;
+}
+
+const WS_FINGERPRINT_HEX_RE = /^[0-9a-f]{64}$/i;
+
+export function isWsFingerprintHex(s: string): boolean {
+  return WS_FINGERPRINT_HEX_RE.test(s);
+}
+
 export type LogRowSortable = {
   timeMs: number;
   nodeId: number;
   dedupeKey: string;
+  /** Wall receive time (browser); used with {@link WS_TIME_REORDER_SKEW_MS} for merge ordering only. */
+  receivedAt?: number;
 };
 
 export function compareLogRowsNewestFirst(a: LogRowSortable, b: LogRowSortable): number {
   if (b.timeMs !== a.timeMs) return b.timeMs - a.timeMs;
   if (b.nodeId !== a.nodeId) return b.nodeId - a.nodeId;
   return a.dedupeKey.localeCompare(b.dedupeKey);
+}
+
+/** Newest-first with a small time skew window (see {@link WS_TIME_REORDER_SKEW_MS}). */
+export function compareLogRowsNewestFirstWithSkew(a: LogRowSortable, b: LogRowSortable): number {
+  if (Math.abs(a.timeMs - b.timeMs) <= WS_TIME_REORDER_SKEW_MS) {
+    const ra = a.receivedAt ?? 0;
+    const rb = b.receivedAt ?? 0;
+    if (rb !== ra) return rb - ra;
+  }
+  return compareLogRowsNewestFirst(a, b);
 }
 
 /** Merge `incoming` into `rows`, dedupe by `dedupeKey`, sort newest-first, cap length. */
@@ -32,33 +61,9 @@ export function mergeSortedDedupeRows<T extends LogRowSortable>(rows: T[], incom
   return out;
 }
 
-function mergeTwoSortedNewestFirst<T extends LogRowSortable>(a: T[], b: T[]): T[] {
-  const out: T[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (compareLogRowsNewestFirst(a[i]!, b[j]!) <= 0) {
-      out.push(a[i]!);
-      i++;
-    } else {
-      out.push(b[j]!);
-      j++;
-    }
-  }
-  while (i < a.length) {
-    out.push(a[i]!);
-    i++;
-  }
-  while (j < b.length) {
-    out.push(b[j]!);
-    j++;
-  }
-  return out;
-}
-
 /**
  * WS hot path: `prev` is already newest-first; `incoming` may be out of order.
- * Dedupes against `prev`, sorts the fresh rows only, then linear-merge with `prev` (no full-table sort).
+ * Dedupes against `prev`, then sorts `prev ∪ fresh` with {@link compareLogRowsNewestFirstWithSkew} and caps.
  */
 export function mergeNewestFirstDedupeIncremental<T extends LogRowSortable>(
   prev: T[],
@@ -74,10 +79,10 @@ export function mergeNewestFirstDedupeIncremental<T extends LogRowSortable>(
     fresh.push(r);
   }
   if (fresh.length === 0) return prev;
-  fresh.sort(compareLogRowsNewestFirst);
-  let merged = mergeTwoSortedNewestFirst(prev, fresh);
+  const merged = [...prev, ...fresh];
+  merged.sort(compareLogRowsNewestFirstWithSkew);
   if (merged.length > MAX_MERGED_LOG_LINES) {
-    merged = merged.slice(0, MAX_MERGED_LOG_LINES);
+    return merged.slice(0, MAX_MERGED_LOG_LINES);
   }
   return merged;
 }

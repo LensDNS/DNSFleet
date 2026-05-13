@@ -51,6 +51,8 @@ func writeWebSocketJSONObject(conn *websocket.Conn, maxBytes int, v any) error {
 }
 
 // ConnectedStubHub implements LogHub for tests: sends system+connected on Register (production uses *querylog.Hub).
+// It does not run writePump, warm replay, or tryEnqueue backpressure; regressions for those belong in
+// `go test ./internal/querylog/...` against the real Hub (see hub_integration_test.go).
 type ConnectedStubHub struct {
 	MaxBytes int
 }

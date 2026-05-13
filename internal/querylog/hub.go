@@ -26,6 +26,8 @@ const (
 	configEveryNPolls = 10
 	// configFetchErrBackoff: after GET querylog/config fails, skip refetch until this elapses (reduces hammering a sick upstream).
 	configFetchErrBackoff = 10 * time.Second
+	// warmReplayMaxEntries: max log lines replayed on new Register; must stay below outboundQueueCap (see tryEnqueue backpressure).
+	warmReplayMaxEntries = 128
 )
 
 type subscriber struct {
@@ -41,10 +43,19 @@ func (s *subscriber) closeStop() {
 
 // wsLogMessage is Step 4 §4.E type=log.
 type wsLogMessage struct {
-	Type     string          `json:"type"`
-	NodeID   uint            `json:"node_id"`
-	NodeName string          `json:"node_name"`
-	Entry    json.RawMessage `json:"entry"`
+	Type        string          `json:"type"`
+	NodeID      uint            `json:"node_id"`
+	NodeName    string          `json:"node_name"`
+	Entry       json.RawMessage `json:"entry"`
+	Fingerprint string          `json:"fingerprint,omitempty"` // SHA-256 hex of Entry raw bytes; matches Hub dedupe key for clients
+}
+
+// warmEntry is a copy of one broadcast log for optional replay to new subscribers (bounded ring, not durable).
+type warmEntry struct {
+	nodeID      uint
+	nodeName    string
+	entry       json.RawMessage
+	fingerprint string
 }
 
 // Hub aggregates GET /control/querylog polling and fans out to WebSocket clients (Step 4 §4.2.1).
@@ -64,6 +75,9 @@ type Hub struct {
 	enabledCache          map[uint]bool
 	configErrBackoffUntil map[uint]time.Time // skip GET querylog/config while time.Now() is before this
 	disabledMsgSent       map[uint]bool
+
+	warmMu   sync.Mutex
+	warmRing []warmEntry // FIFO oldest at [0]; cap warmReplayMaxEntries
 
 	coordinatorOnce sync.Once
 }
@@ -109,14 +123,53 @@ func NewHub(ctx context.Context, db *gorm.DB, cfg config.Config) *Hub {
 	return h
 }
 
-func (h *Hub) clearTailState() {
-	h.nodeMu.Lock()
-	h.nodeTail = make(map[uint]*boundedDedupe)
-	h.configPoll = make(map[uint]int)
-	h.enabledCache = make(map[uint]bool)
-	h.configErrBackoffUntil = make(map[uint]time.Time)
-	h.disabledMsgSent = make(map[uint]bool)
-	h.nodeMu.Unlock()
+func (h *Hub) appendWarmRing(nodeID uint, nodeName string, entry json.RawMessage, fingerprint string) {
+	if fingerprint == "" || len(entry) == 0 {
+		return
+	}
+	entryCopy := append(json.RawMessage(nil), entry...)
+	h.warmMu.Lock()
+	h.warmRing = append(h.warmRing, warmEntry{
+		nodeID:      nodeID,
+		nodeName:    nodeName,
+		entry:       entryCopy,
+		fingerprint: fingerprint,
+	})
+	if len(h.warmRing) > warmReplayMaxEntries {
+		h.warmRing = h.warmRing[len(h.warmRing)-warmReplayMaxEntries:]
+	}
+	h.warmMu.Unlock()
+}
+
+// replayWarmToSubscriber enqueues recent warm entries to sub.out before sub is visible to broadcastJSON.
+// Oversized marshalled frames are skipped here (no frame_too_large system line), unlike the live emit path
+// where tryEnqueue may inject system frames — warm replay is best-effort and must stay simple before writePump.
+func (h *Hub) replayWarmToSubscriber(sub *subscriber) {
+	if sub == nil {
+		return
+	}
+	h.warmMu.Lock()
+	batch := make([]warmEntry, len(h.warmRing))
+	copy(batch, h.warmRing)
+	h.warmMu.Unlock()
+	max := h.effectiveWsMaxFrameBytes()
+	for _, e := range batch {
+		msg := wsLogMessage{
+			Type:        "log",
+			NodeID:      e.nodeID,
+			NodeName:    e.nodeName,
+			Entry:       e.entry,
+			Fingerprint: e.fingerprint,
+		}
+		b, err := json.Marshal(msg)
+		if err != nil {
+			continue
+		}
+		if len(b) > max {
+			continue
+		}
+		_ = h.tryEnqueue(sub, b)
+	}
 }
 
 // Register adds a WebSocket after Upgrade; sends system+connected first on the wire (§4.2.1).
@@ -140,11 +193,14 @@ func (h *Hub) Register(conn *websocket.Conn) bool {
 		stop: make(chan struct{}),
 	}
 
+	// Replay warm buffer before sub enters h.subs so broadcastJSON cannot interleave live before replay.
+	// Concurrency: broadcastJSON only snapshots subs under h.mu; until subs[conn]=sub runs, this conn is
+	// invisible to fan-out. No stress test is required to prove ordering — when warm is non-empty, the
+	// first type=log on sub.out after connected is from replay; when warm is empty, the first log is live
+	// after registration (not interleaved during replay).
+	h.replayWarmToSubscriber(sub)
+
 	h.mu.Lock()
-	first := len(h.subs) == 0
-	if first {
-		h.clearTailState()
-	}
 	h.subs[conn] = sub
 	h.mu.Unlock()
 
@@ -164,14 +220,9 @@ func (h *Hub) Unregister(conn *websocket.Conn) {
 		return
 	}
 	delete(h.subs, conn)
-	remaining := len(h.subs)
 	h.mu.Unlock()
 
 	sub.closeStop()
-
-	if remaining == 0 {
-		h.clearTailState()
-	}
 }
 
 func (h *Hub) writePump(sub *subscriber) {
@@ -303,6 +354,7 @@ func (h *Hub) shutdownSubs() {
 	}
 	h.mu.Unlock()
 	for _, c := range conns {
+		// Unregister first: stops writePump via closeStop and removes sub before we send Close on the conn.
 		h.Unregister(c)
 		_ = c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseGoingAway, ""))
 		_ = c.Close()
@@ -436,12 +488,15 @@ func (h *Hub) emitQueryLogData(node *models.Node, d *boundedDedupe, data []json.
 		if !d.firstTime(key) {
 			continue
 		}
-		h.broadcastJSON(wsLogMessage{
-			Type:     "log",
-			NodeID:   node.ID,
-			NodeName: node.Name,
-			Entry:    raw,
-		})
+		msg := wsLogMessage{
+			Type:        "log",
+			NodeID:      node.ID,
+			NodeName:    node.Name,
+			Entry:       raw,
+			Fingerprint: key,
+		}
+		h.appendWarmRing(node.ID, node.Name, raw, key)
+		h.broadcastJSON(msg)
 	}
 }
 

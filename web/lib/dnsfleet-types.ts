@@ -38,6 +38,8 @@ export type WsLogMessage =
       node_id: number;
       node_name: string;
       entry: Record<string, unknown>;
+      /** SHA-256 hex of upstream entry JSON bytes; matches Hub dedupe key for this row when present. */
+      fingerprint?: string;
     }
   | {
       type: "system";
