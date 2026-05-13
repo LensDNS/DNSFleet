@@ -40,7 +40,7 @@ The embedded web console supports **English and Chinese** UI copy; **English is 
 - **Nodes:** CRUD, credentials (`basic` / `bearer`), online/offline signal, sync to AdGuard Home.
 - **Desired state:** global upstream / rewrite expectations (see API and UI).
 - **Sync & drift:** pull and compare remote config on a schedule; bounded concurrency to each node.
-- **Live Logs:** control plane **Hub** polls `GET /control/querylog` per online node; browsers receive tail traffic on **`GET /api/v1/ws/logs`** and page older rows via **`GET /api/v1/nodes/:id/querylog`** (see [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md)).
+- **Live Logs:** control plane **Hub** polls `GET /control/querylog` per online node; browsers receive tail traffic on **`GET /api/v1/ws/logs`** and page older rows via **`GET /api/v1/nodes/:id/querylog`** (see [`api/DNSFLEET_HTTP_API.md`](api/DNSFLEET_HTTP_API.md) — WebSocket `log` / optional **`fingerprint`** vs REST-derived dedupe is spelled out there).
 - **Distribution:** production build embeds the **Next.js static export** into the Go binary (`go:embed`); one listening port for UI + API. **Docker** image and **Compose** files under [`deploy/`](deploy/).
 
 **Released builds:** see **GitHub Releases** for versioned **static binaries** (Linux, Windows, macOS; amd64/arm64 where applicable), **checksums**, and **container images** on **GHCR** (tag `v*` workflow).

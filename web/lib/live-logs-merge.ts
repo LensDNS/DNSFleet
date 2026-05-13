@@ -45,31 +45,83 @@ export function compareLogRowsNewestFirstWithSkew(a: LogRowSortable, b: LogRowSo
   return compareLogRowsNewestFirst(a, b);
 }
 
-/** Merge `incoming` into `rows`, dedupe by `dedupeKey`, sort newest-first, cap length. */
-export function mergeSortedDedupeRows<T extends LogRowSortable>(rows: T[], incoming: T[]): T[] {
-  const keys = new Set(rows.map((r) => r.dedupeKey));
-  const out = [...rows];
-  for (const r of incoming) {
-    if (keys.has(r.dedupeKey)) continue;
-    keys.add(r.dedupeKey);
-    out.push(r);
+/** Dedupe keys from rows without allocating an intermediate string array (hot path). */
+export function dedupeKeySetFromRows<T extends LogRowSortable>(rows: T[]): Set<string> {
+  const s = new Set<string>();
+  for (let i = 0; i < rows.length; i++) {
+    s.add(rows[i].dedupeKey);
   }
-  out.sort(compareLogRowsNewestFirst);
-  if (out.length > MAX_MERGED_LOG_LINES) {
-    return out.slice(0, MAX_MERGED_LOG_LINES);
+  return s;
+}
+
+/** Both inputs sorted newest-first by {@link compareLogRowsNewestFirst}; output merged same order. */
+function mergeSortedArraysNewestFirst<T extends LogRowSortable>(a: T[], b: T[]): T[] {
+  const out: T[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (compareLogRowsNewestFirst(a[i], b[j]) <= 0) {
+      out.push(a[i++]);
+    } else {
+      out.push(b[j++]);
+    }
   }
+  while (i < a.length) out.push(a[i++]);
+  while (j < b.length) out.push(b[j++]);
+  return out;
+}
+
+/** Both inputs sorted newest-first by {@link compareLogRowsNewestFirstWithSkew}. */
+function mergeSortedArraysNewestFirstWithSkew<T extends LogRowSortable>(a: T[], b: T[]): T[] {
+  const out: T[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (compareLogRowsNewestFirstWithSkew(a[i], b[j]) <= 0) {
+      out.push(a[i++]);
+    } else {
+      out.push(b[j++]);
+    }
+  }
+  while (i < a.length) out.push(a[i++]);
+  while (j < b.length) out.push(b[j++]);
   return out;
 }
 
 /**
- * WS hot path: `prev` is already newest-first; `incoming` may be out of order.
- * Dedupes against `prev`, then sorts `prev ∪ fresh` with {@link compareLogRowsNewestFirstWithSkew} and caps.
+ * Merge `incoming` into `rows`, dedupe by `dedupeKey`, cap length.
+ * **Contract:** `rows` must already be sorted newest-first by {@link compareLogRowsNewestFirst}
+ * (e.g. prior return value of this function, or `[]`). Deduped newcomers are sorted, then linearly merged with `rows`.
+ */
+export function mergeSortedDedupeRows<T extends LogRowSortable>(rows: T[], incoming: T[]): T[] {
+  const keys = rows.length === 0 ? new Set<string>() : dedupeKeySetFromRows(rows);
+  const add: T[] = [];
+  for (const r of incoming) {
+    if (keys.has(r.dedupeKey)) continue;
+    keys.add(r.dedupeKey);
+    add.push(r);
+  }
+  if (add.length === 0) {
+    return rows.length <= MAX_MERGED_LOG_LINES ? rows : rows.slice(0, MAX_MERGED_LOG_LINES);
+  }
+  add.sort(compareLogRowsNewestFirst);
+  const merged = mergeSortedArraysNewestFirst(rows, add);
+  if (merged.length > MAX_MERGED_LOG_LINES) {
+    return merged.slice(0, MAX_MERGED_LOG_LINES);
+  }
+  return merged;
+}
+
+/**
+ * WS hot path: `prev` is already newest-first by {@link compareLogRowsNewestFirstWithSkew}; `incoming` may be out of order.
+ * Dedupes against `prev`, sorts only the new `fresh` rows with {@link compareLogRowsNewestFirstWithSkew},
+ * linearly merges with `prev`, then caps (no full-table sort of `prev ∪ fresh`).
  */
 export function mergeNewestFirstDedupeIncremental<T extends LogRowSortable>(
   prev: T[],
   incoming: T[],
 ): T[] {
-  const prevKeys = new Set(prev.map((r) => r.dedupeKey));
+  const prevKeys = prev.length === 0 ? new Set<string>() : dedupeKeySetFromRows(prev);
   const fresh: T[] = [];
   const seenFresh = new Set<string>();
   for (const r of incoming) {
@@ -79,8 +131,8 @@ export function mergeNewestFirstDedupeIncremental<T extends LogRowSortable>(
     fresh.push(r);
   }
   if (fresh.length === 0) return prev;
-  const merged = [...prev, ...fresh];
-  merged.sort(compareLogRowsNewestFirstWithSkew);
+  const sortedFresh = [...fresh].sort(compareLogRowsNewestFirstWithSkew);
+  const merged = mergeSortedArraysNewestFirstWithSkew(prev, sortedFresh);
   if (merged.length > MAX_MERGED_LOG_LINES) {
     return merged.slice(0, MAX_MERGED_LOG_LINES);
   }

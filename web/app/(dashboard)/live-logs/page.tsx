@@ -6,6 +6,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type KeyboardEvent,
@@ -126,13 +127,81 @@ async function buildLogRow(
   };
 }
 
+/** Stable token for `entry.time` so first-row summary deps track display-relevant changes. */
+function stableEntryTimeToken(entryTime: unknown): string {
+  try {
+    return JSON.stringify(entryTime);
+  } catch {
+    return String(entryTime);
+  }
+}
+
+/** Max concurrent `logRowDedupeKeyHex` (SHA-256) calls per WS batch without fingerprint (PR4 client path). */
+const WS_DIGEST_CONCURRENCY = 3;
+
+type WsPendingEntry = {
+  nodeId: number;
+  nodeName: string;
+  entry: Record<string, unknown>;
+  receivedAt: number;
+  fingerprint?: string;
+};
+
+async function buildLogRowsDigestLimited(items: WsPendingEntry[]): Promise<LogRow[]> {
+  if (items.length === 0) return [];
+  const results: (LogRow | undefined)[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const idx = next++;
+      if (idx >= items.length) break;
+      try {
+        const it = items[idx];
+        results[idx] = await buildLogRow(it.nodeId, it.nodeName, it.entry, it.receivedAt, it.fingerprint);
+      } catch {
+        // skip one malformed row
+      }
+    }
+  };
+  const pool = Math.min(WS_DIGEST_CONCURRENCY, items.length);
+  await Promise.all(Array.from({ length: pool }, () => worker()));
+  const out: LogRow[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r !== undefined) out.push(r);
+  }
+  return out;
+}
+
+type LogRowsModel = { logRows: LogRow[]; pausedDeep: Record<number, boolean> };
+
+type LogRowsDispatchAction =
+  | { type: "applyMerged"; merged: LogRow[] }
+  | { type: "setBoth"; logRows: LogRow[]; pausedDeep: Record<number, boolean> };
+
+function logRowsReducer(state: LogRowsModel, action: LogRowsDispatchAction): LogRowsModel {
+  switch (action.type) {
+    case "applyMerged":
+      return { logRows: action.merged, pausedDeep: recomputePausedDeep(action.merged) };
+    case "setBoth":
+      return { logRows: action.logRows, pausedDeep: action.pausedDeep };
+    default:
+      return state;
+  }
+}
+
 export default function LiveLogsPage() {
   const { t, locale } = useLocale();
   const tRef = useRef(t);
   useEffect(() => {
     tRef.current = t;
   }, [t]);
-  const [logRows, setLogRows] = useState<LogRow[]>([]);
+  const [logRowsModel, dispatchLogRows] = useReducer(logRowsReducer, {
+    logRows: [] as LogRow[],
+    pausedDeep: {} as Record<number, boolean>,
+  });
+  const { logRows, pausedDeep } = logRowsModel;
+
   const [systemLines, setSystemLines] = useState<SystemLine[]>([]);
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed">("idle");
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
@@ -140,7 +209,6 @@ export default function LiveLogsPage() {
   const [detail, setDetail] = useState<LogRow | null>(null);
   const [initialLoad, setInitialLoad] = useState<"loading" | "ready">("loading");
   const [nodeTails, setNodeTails] = useState<Record<number, NodeTailState>>({});
-  const [pausedDeep, setPausedDeep] = useState<Record<number, boolean>>({});
 
   const logRowsRef = useRef(logRows);
   const nodeTailsRef = useRef(nodeTails);
@@ -314,8 +382,7 @@ export default function LiveLogsPage() {
       }
       const merged = mergeSortedDedupeRows(logRowsRef.current, incoming);
       logRowsRef.current = merged;
-      setLogRows(merged);
-      queueMicrotask(() => setPausedDeep(recomputePausedDeep(merged)));
+      dispatchLogRows({ type: "applyMerged", merged });
       setNodeTails((prev) => ({
         ...prev,
         [pickedNodeId]: {
@@ -442,8 +509,7 @@ export default function LiveLogsPage() {
         const online = nodes.filter((n) => n.online);
         if (online.length === 0) {
           setNodeTails({});
-          setPausedDeep({});
-          setLogRows([]);
+          dispatchLogRows({ type: "setBoth", logRows: [], pausedDeep: {} });
           setInitialLoad("ready");
           return;
         }
@@ -484,9 +550,8 @@ export default function LiveLogsPage() {
         if (gen !== fetchGen.current) return;
         const merged = mergeSortedDedupeRows([], incoming);
         logRowsRef.current = merged;
-        setLogRows(merged);
+        dispatchLogRows({ type: "applyMerged", merged });
         setNodeTails(tails);
-        setPausedDeep(recomputePausedDeep(merged));
       } catch (e) {
         if (gen !== fetchGen.current) return;
         const msg = e instanceof Error ? e.message : String(e);
@@ -516,6 +581,20 @@ export default function LiveLogsPage() {
     const safeWsUrl: string = built;
 
     let cancelled = false;
+    /**
+     * Promise tail inside this effect: serializes every post-`splice` path that does digest + merge + `applyWsMerged`.
+     * `flushWsPending` and the async remainder of `flushPendingOnDisconnect` enqueue here so batches run FIFO even if
+     * another `requestAnimationFrame` fires while a prior `await buildLogRowsDigestLimited` is still in flight.
+     */
+    let wsFlushTail: Promise<void> = Promise.resolve();
+    const enqueueWsPostSpliceWork = (run: () => Promise<void>) => {
+      wsFlushTail = wsFlushTail.then(run).catch((err: unknown) => {
+        // Keep the tail alive: do not stall later batches if one digest/merge throws.
+        if (process.env.NODE_ENV === "development") {
+          console.error("[live-logs] wsFlushTail digest/merge failed", err);
+        }
+      });
+    };
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
@@ -536,11 +615,16 @@ export default function LiveLogsPage() {
     function applyWsMerged(merged: LogRow[]) {
       if (cancelled) return;
       logRowsRef.current = merged;
-      setLogRows(merged);
-      queueMicrotask(() => setPausedDeep(recomputePausedDeep(merged)));
+      dispatchLogRows({ type: "applyMerged", merged });
     }
 
-    /** Cancel rAF first; drain queue: fingerprint rows merge synchronously, remainder one async batch. */
+    /**
+     * Drain pending WS rows (e.g. on socket close/error or effect cleanup).
+     * Fingerprint rows merge **synchronously** so `locale`/unmount cleanup can still apply them before `cancelled`
+     * suppresses enqueued async work. Digest-only remainder is serialized on the same `wsFlushTail` chain as live `flushWsPending`.
+     * That sync step can still interleave with an in-flight digest job for a narrow window vs global strict FIFO;
+     * fully serializing fingerprint merges too would require enqueueing them and revisiting cleanup/`cancelled` order.
+     */
     function flushPendingOnDisconnect() {
       const batch = pendingWsEntries.current.splice(0);
       if (batch.length === 0) return;
@@ -564,53 +648,25 @@ export default function LiveLogsPage() {
         applyWsMerged(merged);
       }
       if (asyncRemainder.length === 0) return;
-      void (async () => {
-        const built: LogRow[] = [];
-        for (const item of asyncRemainder) {
-          try {
-            built.push(
-              await buildLogRow(
-                item.nodeId,
-                item.nodeName,
-                item.entry,
-                item.receivedAt,
-                item.fingerprint,
-              ),
-            );
-          } catch {
-            // skip one malformed row
-          }
-        }
+      enqueueWsPostSpliceWork(async () => {
+        if (cancelled) return;
+        const built = await buildLogRowsDigestLimited(asyncRemainder);
         if (cancelled || built.length === 0) return;
         const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, built);
         applyWsMerged(merged);
-      })();
+      });
     }
 
     function flushWsPending() {
       const batch = pendingWsEntries.current.splice(0);
       if (batch.length === 0) return;
-      void (async () => {
-        const built: LogRow[] = [];
-        for (const item of batch) {
-          try {
-            built.push(
-              await buildLogRow(
-                item.nodeId,
-                item.nodeName,
-                item.entry,
-                item.receivedAt,
-                item.fingerprint,
-              ),
-            );
-          } catch {
-            // skip one malformed row
-          }
-        }
+      enqueueWsPostSpliceWork(async () => {
+        if (cancelled) return;
+        const built = await buildLogRowsDigestLimited(batch);
         if (cancelled || built.length === 0) return;
         const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, built);
         applyWsMerged(merged);
-      })();
+      });
     }
 
     function scheduleWsFlush() {
@@ -729,9 +785,22 @@ export default function LiveLogsPage() {
     };
   }, [locale]);
 
-  const operatorSummary = useMemo(() => {
+  // Recomputes whenever `logRows` identity changes; downstream `operatorLastLog` / `operatorSummary` skip work when the string is unchanged.
+  const firstRowSummaryKey = useMemo(() => {
     const last = logRows[0];
-    const lastLog = last ? formatDisplayTime(last.entry.time, last.receivedAt, locale) : "—";
+    if (!last) return "";
+    return `${last.dedupeKey}\t${last.timeMs}\t${last.receivedAt ?? ""}\t${stableEntryTimeToken(last.entry.time)}`;
+  }, [logRows]);
+
+  const operatorLastLog = useMemo(() => {
+    if (!firstRowSummaryKey) return "—";
+    const last = logRows[0];
+    if (!last) return "—";
+    return formatDisplayTime(last.entry.time, last.receivedAt, locale);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Row-0 display inputs are summarized in firstRowSummaryKey; omit logRows to avoid recomputing on unrelated tail churn.
+  }, [firstRowSummaryKey, locale]);
+
+  const operatorSummary = useMemo(() => {
     const tail = systemLines.slice(-20);
     const counts = new Map<string, number>();
     for (const ln of tail) {
@@ -751,11 +820,11 @@ export default function LiveLogsPage() {
     const events = parts.length > 0 ? parts.join(", ") : "—";
     return interpolate(t("liveLogs.operatorSummary"), {
       status,
-      lastLog,
+      lastLog: operatorLastLog,
       attempt: reconnectAttempt,
       events,
     });
-  }, [systemLines, logRows, status, reconnectAttempt, locale, t]);
+  }, [operatorLastLog, systemLines, status, reconnectAttempt, t]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">

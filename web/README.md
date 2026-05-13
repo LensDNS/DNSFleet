@@ -87,6 +87,8 @@ The **`/live-logs`** merged table uses viewport virtualization (`@tanstack/react
 
 **Before merging Live Logs UI changes**, run that production build and briefly confirm: scroll to the true bottom (including the optional history status row), bottom `IntersectionObserver` still triggers `older_than` loads, short-table auto-fill stays bounded, WebSocket prepend stress (plan: ≥10s or ≥30 messages) keeps the viewport anchor acceptable, Sheet detail opens from a row. ESLint may report `react-hooks/incompatible-library` on `useVirtualizer` (TanStack + React Compiler); the code uses a ref for `measure()` so layout/resize effects do not depend on the virtualizer object identity each render.
 
+**Profiler（人工门槛）**：性能相关改动请在 **同机**、**production build** 下用 React Profiler 各录一段前后对比，关注 **Scripting** / **Layout** 与 `LiveLogsPage` 的 commit 次数；首屏多节点 REST 在 **无** `fingerprint` 时仍有 **每行 SHA-256** 成本（与 WS 尾包 digest 不同线）。无 `fingerprint` 的 WS 待处理批次在客户端以 **有界并发**（`live-logs/page.tsx` 内常量）跑 `buildLogRow`，避免无界 `Promise.all` 拉长单帧尖峰。
+
 ## Production build（嵌入二进制 / Docker）
 
 ```bash
@@ -128,7 +130,9 @@ npm run lint     # eslint
 
 **Live Logs 断开路径与 fingerprint**：关闭 WebSocket、断网或离开页面时，**仅带合法 `fingerprint` 的**待处理 WS 行可走 **同步**路径合并进表格状态；**无** `fingerprint`（或非法）的行仍走 **异步** `buildLogRow`，若在 `cancelled` 之后才完成则 **不会**写入列表——关 tab / 断线瞬间仍可能 **少几行尾部**；不能接受则须扩展同步键或保证上游始终下发 `fingerprint`。`onerror` 与 `onclose` 可能各触发一次 drain：首次 `splice` 已清空时第二次为空，**无**重复合并问题。
 
-**合并与性能**：`mergeNewestFirstDedupeIncremental` 对每批在 **最多 500 行** 上做一次带时间 skew 的 **全量排序**（`MAX_MERGED_LOG_LINES`）；通常足够轻，极端高频 WS + 长会话时可在 Performance 面板关注主线程排序成本，再考虑分段归并或限制每帧入队条数。
+**WS 异步 digest 串行**：`live-logs/page.tsx` 里 WebSocket `useEffect` 闭包维护 **`wsFlushTail` + `enqueueWsPostSpliceWork`**：`flushWsPending` 在 `splice` 之后把 **digest + merge + `applyWsMerged`** 排入同一 **Promise 尾队列**，保证多帧 rAF 触发的尾批按 **FIFO** 执行，避免上一批尚未 `await` 完成时又开新批导致与 skew 语义偏离。`flushPendingOnDisconnect` 中需 digest 的余量也进同一队列；链上 `.catch` 避免单批异常卡死后续。**带 fingerprint 的同步**合并仍在 disconnect 路径上 **立即**执行（以便 `cancelled` 前仍能落表）；若与尾队列里未决 digest 交错，极短窗口内与「全局严格 FIFO」仍有理论差异（多由 `entry.time` 主序掩盖）。若产品要求 disconnect 的 sync 与 live digest 也完全串行，须将 sync 一并进队并重排 effect cleanup / `cancelled` 时序，**单独评估**、勿与小额 digest 串行混为同一 PR。
+
+**合并与性能**：`mergeNewestFirstDedupeIncremental` 在 **最多 500 行**（`MAX_MERGED_LOG_LINES`）上对已 newest-first 的 `prev` 与去重后的新行先 **小批 sort** 再 **线性归并**（带 `WS_TIME_REORDER_SKEW_MS` / `receivedAt`）；`mergeSortedDedupeRows`（REST / 首屏 / 分页）同理。极端高频 WS 时仍可在 Performance 面板关注归并与 cap 成本。
 
 **Hub warm 语义**：控制面 warm ring 为 **全局最近** 有限条 **`log`** 的聚合缓冲，**不是**每节点独立完整 tail；与 per-node `nodeTail` 去重映射是两套边界——运维上可接受，但 **勿**将「重连 warm」理解为「恢复每节点全部未读历史」。
 

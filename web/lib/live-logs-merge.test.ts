@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compareLogRowsNewestFirst,
+  compareLogRowsNewestFirstWithSkew,
+  dedupeKeySetFromRows,
   MAX_MERGED_LOG_LINES,
   mergeNewestFirstDedupeIncremental,
   mergeSortedDedupeRows,
@@ -8,7 +11,41 @@ import {
   recomputePausedDeep,
 } from "./live-logs-merge";
 
-type R = { timeMs: number; nodeId: number; dedupeKey: string };
+type R = { timeMs: number; nodeId: number; dedupeKey: string; receivedAt?: number };
+
+function mergeNewestFirstDedupeNaive(prev: R[], incoming: R[]): R[] {
+  const prevKeys = prev.length === 0 ? new Set<string>() : dedupeKeySetFromRows(prev);
+  const fresh: R[] = [];
+  const seenFresh = new Set<string>();
+  for (const r of incoming) {
+    if (prevKeys.has(r.dedupeKey)) continue;
+    if (seenFresh.has(r.dedupeKey)) continue;
+    seenFresh.add(r.dedupeKey);
+    fresh.push(r);
+  }
+  if (fresh.length === 0) return prev;
+  const merged = [...prev, ...fresh];
+  merged.sort(compareLogRowsNewestFirstWithSkew);
+  if (merged.length > MAX_MERGED_LOG_LINES) {
+    return merged.slice(0, MAX_MERGED_LOG_LINES);
+  }
+  return merged;
+}
+
+function mergeSortedDedupeRowsNaive(rows: R[], incoming: R[]): R[] {
+  const keys = rows.length === 0 ? new Set<string>() : dedupeKeySetFromRows(rows);
+  const out = [...rows];
+  for (const r of incoming) {
+    if (keys.has(r.dedupeKey)) continue;
+    keys.add(r.dedupeKey);
+    out.push(r);
+  }
+  out.sort(compareLogRowsNewestFirst);
+  if (out.length > MAX_MERGED_LOG_LINES) {
+    return out.slice(0, MAX_MERGED_LOG_LINES);
+  }
+  return out;
+}
 
 describe("mergeSortedDedupeRows", () => {
   it("sorts newest first and dedupes", () => {
@@ -27,6 +64,38 @@ describe("mergeSortedDedupeRows", () => {
     const merged = mergeSortedDedupeRows([], rows);
     expect(merged.length).toBe(MAX_MERGED_LOG_LINES);
     expect(merged[0].dedupeKey).toBe(`k${MAX_MERGED_LOG_LINES + 19}`);
+  });
+
+  it("matches naive full-sort merge for random REST-shaped batches", () => {
+    let rng = 42_001;
+    const rnd = () => {
+      rng = (rng * 1103515245 + 12345) >>> 0;
+      return rng / 0xffff_ffff;
+    };
+    for (let iter = 0; iter < 60; iter++) {
+      const rowLen = Math.floor(rnd() * 15);
+      const rows: R[] = [];
+      for (let i = 0; i < rowLen; i++) {
+        rows.push({
+          timeMs: Math.floor(rnd() * 1e9),
+          nodeId: 1 + Math.floor(rnd() * 3),
+          dedupeKey: `r${iter}-${i}`,
+        });
+      }
+      rows.sort(compareLogRowsNewestFirst);
+      const incLen = Math.floor(rnd() * 10);
+      const incoming: R[] = [];
+      for (let i = 0; i < incLen; i++) {
+        incoming.push({
+          timeMs: Math.floor(rnd() * 1e9),
+          nodeId: 1 + Math.floor(rnd() * 3),
+          dedupeKey: `i${iter}-${i}`,
+        });
+      }
+      const naive = mergeSortedDedupeRowsNaive(rows, incoming);
+      const opt = mergeSortedDedupeRows(rows, incoming);
+      expect(opt.map((x) => x.dedupeKey).join(",")).toBe(naive.map((x) => x.dedupeKey).join(","));
+    }
   });
 });
 
@@ -94,6 +163,40 @@ describe("mergeNewestFirstDedupeIncremental", () => {
     ];
     const m = mergeNewestFirstDedupeIncremental(prev, incoming);
     expect(m.map((x) => x.dedupeKey).join(",")).toBe("a,b,p");
+  });
+
+  it("matches naive full-sort merge for random WS batches (skew + receivedAt)", () => {
+    let rng = 77_777;
+    const rnd = () => {
+      rng = (rng * 1103515245 + 12345) >>> 0;
+      return rng / 0xffff_ffff;
+    };
+    for (let iter = 0; iter < 80; iter++) {
+      const plen = Math.floor(rnd() * 12);
+      const prev: R[] = [];
+      for (let i = 0; i < plen; i++) {
+        prev.push({
+          timeMs: Math.floor(rnd() * 1e9),
+          nodeId: 1 + Math.floor(rnd() * 3),
+          dedupeKey: `p${iter}-${i}`,
+          receivedAt: Math.floor(rnd() * 1e6),
+        });
+      }
+      prev.sort(compareLogRowsNewestFirstWithSkew);
+      const incLen = Math.floor(rnd() * 8);
+      const incoming: R[] = [];
+      for (let i = 0; i < incLen; i++) {
+        incoming.push({
+          timeMs: Math.floor(rnd() * 1e9),
+          nodeId: 1 + Math.floor(rnd() * 3),
+          dedupeKey: `w${iter}-${i}`,
+          receivedAt: Math.floor(rnd() * 1e6),
+        });
+      }
+      const naive = mergeNewestFirstDedupeNaive(prev, incoming);
+      const opt = mergeNewestFirstDedupeIncremental(prev, incoming);
+      expect(opt.map((x) => x.dedupeKey).join(",")).toBe(naive.map((x) => x.dedupeKey).join(","));
+    }
   });
 });
 
