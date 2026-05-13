@@ -1,11 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { toast } from "sonner";
-import { EllipsisVertical } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
@@ -20,17 +28,9 @@ import {
   entryDetailSections,
   entryTimeToMs,
   formatDisplayTime,
-  formatResponseSummaryLine,
   inferResultKind,
   isSlowQuery,
   normalizeEntry,
-  resultKindAriaLabel,
-  resultKindBorderClass,
-  resultKindRowClass,
-  resultKindShortLabel,
-  slowQueryRowAccentClass,
-  type NormalizedQueryLogEntry,
-  type ResultKind,
 } from "@/lib/query-log-display";
 import {
   isWsFingerprintHex,
@@ -45,26 +45,14 @@ import { fetchNodeQueryLog, fetchNodes } from "@/lib/node-querylog";
 import { buildLogsWebSocketUrl } from "@/lib/ws-logs-url";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { interpolate } from "@/lib/i18n/resolve-message";
-import { cn } from "@/lib/utils";
+
+import type { LogRow } from "./log-row-model";
+import { LogTableRow } from "./log-table-row";
 
 const MAX_SYSTEM = 100;
 
 /** sessionStorage: another tab may have opened WS recently (multi-tab awareness; each tab still connects). */
 const LIVE_LOGS_TAB_ACTIVE_KEY = "dnsfleet.liveLogs.wsActiveAt";
-
-type LogRow = {
-  kind: "log";
-  key: string;
-  dedupeKey: string;
-  timeMs: number;
-  receivedAt: number;
-  nodeId: number;
-  nodeName: string;
-  entry: Record<string, unknown>;
-  normalized: NormalizedQueryLogEntry;
-  resultKind: ResultKind;
-  slowQuery: boolean;
-};
 
 type SystemLine = {
   kind: "system";
@@ -168,6 +156,8 @@ export default function LiveLogsPage() {
   const globalOlderBusy = useRef(false);
   const olderCooldownUntil = useRef(0);
   const wasAwayFromBottom = useRef(false);
+  /** After user scrolls near the bottom once, short-viewport autoFill may chase `older_than` (see autoFill effect). */
+  const userEngagedBottomRef = useRef(false);
   const pageSession = useRef(0);
   const pendingWsEntries = useRef<
     {
@@ -179,6 +169,51 @@ export default function LiveLogsPage() {
     }[]
   >([]);
   const wsFlushRaf = useRef<number | null>(null);
+
+  // TanStack's virtualizer identity can change every render; drive layout/resize measure() via ref
+  // so effects do not resubscribe every frame. React Compiler skips memoizing this hook (see eslint below).
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack useVirtualizer; measure paths use rowVirtualizerRef
+  const rowVirtualizer = useVirtualizer({
+    count: logRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 56,
+    overscan: 6,
+  });
+  const rowVirtualizerRef = useRef(rowVirtualizer);
+  rowVirtualizerRef.current = rowVirtualizer;
+
+  const openDetailForRowKey = useCallback((key: string) => {
+    const found = logRowsRef.current.find((r) => r.key === key);
+    if (found) setDetail(snapshotLogRow(found));
+  }, []);
+
+  const onLogTbodyClick = useCallback(
+    (e: MouseEvent<HTMLTableSectionElement>) => {
+      const el = (e.target as HTMLElement | null)?.closest("[data-action=\"detail\"][data-row-key]");
+      if (!el) return;
+      const key = el.getAttribute("data-row-key");
+      if (!key) return;
+      openDetailForRowKey(key);
+    },
+    [openDetailForRowKey],
+  );
+
+  /** Delegated keyboard for non-`<button>` detail controls; native `<button>` keeps browser Enter/Space. */
+  const onLogTbodyKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTableSectionElement>) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const targetEl = e.target as HTMLElement | null;
+      if (!targetEl) return;
+      const el = targetEl.closest<HTMLElement>("[data-action=\"detail\"][data-row-key]");
+      if (!el) return;
+      if (el instanceof HTMLButtonElement) return;
+      if (e.key === " ") e.preventDefault();
+      const key = el.getAttribute("data-row-key");
+      if (!key) return;
+      openDetailForRowKey(key);
+    },
+    [openDetailForRowKey],
+  );
 
   useEffect(
     () => () => {
@@ -256,7 +291,8 @@ export default function LiveLogsPage() {
 
     const sessionAtStart = pageSession.current;
     globalOlderBusy.current = true;
-    olderCooldownUntil.current = Date.now() + 300;
+    // Throttle deep-history fetches; autoFill + IO share this path.
+    olderCooldownUntil.current = Date.now() + 1200;
 
     olderInFlight.current.add(pickedNodeId);
     loadOlderAbortRef.current?.abort();
@@ -305,6 +341,9 @@ export default function LiveLogsPage() {
     const el = scrollRef.current;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist <= 100) {
+      userEngagedBottomRef.current = true;
+    }
     if (dist > 150) {
       wasAwayFromBottom.current = true;
       return;
@@ -331,6 +370,24 @@ export default function LiveLogsPage() {
     return t("liveLogs.history.partialExhausted");
   }, [nodeTails, t]);
 
+  useLayoutEffect(() => {
+    if (logRows.length === 0 || initialLoad !== "ready") return;
+    const id = requestAnimationFrame(() => {
+      rowVirtualizerRef.current.measure();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [logRows.length, initialLoad, locale, historyStatusMessage]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      rowVirtualizerRef.current.measure();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [initialLoad]);
+
   useEffect(() => {
     if (logRows.length !== prevLogLen.current) {
       prevLogLen.current = logRows.length;
@@ -338,13 +395,18 @@ export default function LiveLogsPage() {
     }
   }, [logRows.length]);
 
-  /** When the table is shorter than the viewport, still chase `older_than` until scrollable or exhausted. */
+  /**
+   * When the table is shorter than the viewport, optionally chase `older_than` until scrollable or exhausted.
+   * Only the first chase runs without a user scroll-to-bottom gesture; further bursts require
+   * `userEngagedBottomRef` (scroll within 100px of bottom) so we do not hammer `older_than` while the user has not engaged.
+   */
   useEffect(() => {
     if (initialLoad !== "ready") return;
     const el = scrollRef.current;
     if (!el || logRows.length === 0) return;
     const short = el.scrollHeight <= el.clientHeight + 8;
     if (!short) return;
+    if (!userEngagedBottomRef.current && autoFillBursts.current >= 1) return;
     if (autoFillBursts.current >= 9) return;
     autoFillBursts.current += 1;
     void loadOlderPage();
@@ -365,7 +427,7 @@ export default function LiveLogsPage() {
     );
     io.observe(sent);
     return () => io.disconnect();
-  }, [initialLoad, loadOlderPage, logRows.length]);
+  }, [initialLoad, loadOlderPage, logRows.length, historyStatusMessage]);
 
   useEffect(() => {
     const gen = ++fetchGen.current;
@@ -373,6 +435,7 @@ export default function LiveLogsPage() {
 
     void (async () => {
       setInitialLoad("loading");
+      userEngagedBottomRef.current = false;
       try {
         const nodes = await fetchNodes(ac.signal);
         if (gen !== fetchGen.current) return;
@@ -770,7 +833,7 @@ export default function LiveLogsPage() {
                 </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody onClick={onLogTbodyClick} onKeyDown={onLogTbodyKeyDown}>
               {initialLoad === "loading" && logRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
@@ -785,98 +848,53 @@ export default function LiveLogsPage() {
                 </tr>
               ) : (
                 <>
-                {logRows.map((row) => {
-                  const timeStr = formatDisplayTime(row.entry.time, row.receivedAt, locale);
-                  const summaryLine = formatResponseSummaryLine(row.normalized);
-                  return (
-                    <tr
-                      key={row.key}
-                      className={cn(
-                        "border-b border-border/60 transition-colors",
-                        resultKindRowClass(row.resultKind),
-                        resultKindBorderClass(row.resultKind),
-                        slowQueryRowAccentClass(row.slowQuery),
-                      )}
-                      aria-label={`${resultKindAriaLabel(row.resultKind, locale)}${row.slowQuery ? t("liveLogs.rowAriaSlow") : ""}`}
-                    >
-                      <td className="whitespace-nowrap px-2 py-1.5 align-top font-mono text-[11px] text-muted-foreground">
-                        {timeStr}
-                      </td>
-                      <td
-                        className="max-w-[120px] truncate px-2 py-1.5 align-top text-muted-foreground transition-colors hover:text-foreground"
-                        title={row.nodeName}
-                      >
-                        {row.nodeName}
-                        <span className="sr-only"> node id {row.nodeId}</span>
-                      </td>
-                      <td className="max-w-[220px] px-2 py-1.5 align-top">
-                        <div className="truncate font-medium text-foreground" title={row.normalized.requestLine}>
-                          {row.normalized.requestLine}
-                        </div>
-                      </td>
-                      <td className="max-w-[260px] px-2 py-1.5 align-top">
-                        <div className="truncate text-foreground" title={summaryLine}>
-                          {summaryLine}
-                        </div>
-                        <div className="mt-0.5 flex flex-wrap gap-1">
-                          {row.resultKind !== "neutral" ? (
-                            <Badge
-                              variant="outline"
-                              className="max-w-full truncate border-border/80 font-normal text-[10px] text-foreground"
-                              title={resultKindAriaLabel(row.resultKind, locale)}
-                            >
-                              {resultKindShortLabel(row.resultKind, locale)}
-                            </Badge>
-                          ) : null}
-                          {row.slowQuery ? (
-                            <Badge
-                              variant="outline"
-                              className="border-amber-500/40 font-normal text-[10px] text-foreground"
-                              title={t("liveLogs.slowQueryTitle")}
-                            >
-                              {t("liveLogs.slowQuery")}
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td
-                        className="max-w-[180px] px-2 py-1.5 align-top text-left"
-                        title={[row.normalized.clientPrimary, row.normalized.clientSecondary]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      >
-                        <div className="truncate text-sm font-medium text-foreground" title={row.normalized.clientPrimary}>
-                          {row.normalized.clientPrimary}
-                        </div>
-                        {row.normalized.clientSecondary ? (
-                          <div
-                            className="truncate font-mono text-[11px] text-muted-foreground"
-                            title={row.normalized.clientSecondary}
-                          >
-                            {row.normalized.clientSecondary}
-                          </div>
+                  {(() => {
+                    const v = rowVirtualizer;
+                    const items = v.getVirtualItems();
+                    const padTop = items[0]?.start ?? 0;
+                    const last = items[items.length - 1];
+                    const padBottomRaw =
+                      items.length > 0 ? v.getTotalSize() - last.end : v.getTotalSize();
+                    const padBottom = Math.max(padBottomRaw, 4);
+                    return (
+                      <>
+                        {padTop > 0 ? (
+                          <tr aria-hidden>
+                            <td colSpan={6} style={{ height: padTop }} className="p-0" />
+                          </tr>
                         ) : null}
-                      </td>
-                      <td className="px-1 py-1 align-top text-center">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-xs"
-                          className="text-muted-foreground hover:text-foreground"
-                          aria-label={t("liveLogs.rowDetailsAria")}
-                          onClick={() => setDetail(snapshotLogRow(row))}
-                        >
-                          <EllipsisVertical className="size-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                <tr aria-hidden className="h-px">
-                  <td colSpan={6} className="p-0">
-                    <div ref={sentinelRef} className="h-1 w-full" />
-                  </td>
-                </tr>
+                        {items.map((vi) => {
+                          const row = logRows[vi.index];
+                          if (!row) return null;
+                          return (
+                            <LogTableRow
+                              key={row.key}
+                              row={row}
+                              locale={locale}
+                              virtualIndex={vi.index}
+                              measureElement={v.measureElement}
+                              rowHeightPx={vi.size}
+                              detailAriaLabel={t("liveLogs.rowDetailsAria")}
+                              slowQueryLabel={t("liveLogs.slowQuery")}
+                              slowQueryTitle={t("liveLogs.slowQueryTitle")}
+                              rowAriaSlowSuffix={t("liveLogs.rowAriaSlow")}
+                            />
+                          );
+                        })}
+                        <tr aria-hidden>
+                          <td
+                            colSpan={6}
+                            style={{ height: padBottom }}
+                            className="relative box-border p-0 align-top"
+                          >
+                            <div className="flex h-full min-h-0 flex-col justify-end">
+                              <div ref={sentinelRef} className="h-1 w-full shrink-0" />
+                            </div>
+                          </td>
+                        </tr>
+                      </>
+                    );
+                  })()}
                 </>
               )}
               {historyStatusMessage ? (

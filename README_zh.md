@@ -224,7 +224,7 @@ go test ./cmd/... ./internal/...
 
 **`go test`** 要求 **`internal/webui/dist`** 非空（先 `web` 生产构建再 `make ensure-webui-dist`，或直接 **`make test`**）。若存在 **`web/node_modules`**，请勿在仓库根执行 **`go test ./...`**，以免扫到无关 Go 包；请限定 **`./cmd/... ./internal/...`**。
 
-**Web：**（详见 [`web/README.md`](web/README.md)）
+**Web：**（详见 [`web/README.md`](web/README.md)；**Live Logs 虚拟表合入前手测清单、production 对比方式、以及 `useVirtualizer` 的 ESLint 说明以英文 `web/README.md` 为准**，中文本文件此处不重复全文。）
 
 ```bash
 cd web && npm ci && npm run lint && npm run test && npm run build
