@@ -78,6 +78,16 @@
 | **Body** | `GetVersionRequest` 仅含 `recheck_now` 属性；**schema 无 `required` 数组**（字段可按需省略；示例 `{"recheck_now": true}` 为常见用法）。 |
 | **语义** | 获取 **线上最新可用版本** 等信息；**不是**读取本机已安装版本。**本机版本**请用 **`GET /control/status` 的 `version`**。 |
 
+### 统计快照（`Stats` · DNSFleet v0.1.4 节点卡片）
+
+| 项 | 值 |
+|----|-----|
+| **路径** | `GET /control/stats` |
+| **Method** | `GET` |
+| **Query** | 可选 **`recent`**（OpenAPI）；**DNSFleet v0.1.4 默认不传**，使用 AdGH 已配置的 statistics interval 内的聚合。 |
+| **成功 JSON（要点）** | OpenAPI **`Stats`**。DNSFleet 当前映射：`num_dns_queries`（int64）、`num_blocked_filtering`（int64）、`avg_processing_time`（**秒**，float）。其它字段（`top_queried_domains`、`dns_queries` 时间序列等）**不**在控制面节点卡片展示。 |
+| **语义** | 节点自报告的 **runtime 统计周期** 内计数；**不是** DNSFleet 持久化历史；控制面仅在 **probe** 成功时读一次并缓存到 SQLite 供 `GET /api/v1/nodes` 展示。 |
+
 ---
 
 ## 3）上游 DNS（upstream）

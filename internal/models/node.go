@@ -30,6 +30,13 @@ type Node struct {
 	LastPingMs int64  `gorm:"default:0"` // 毫秒；未知为 0。
 	LastSyncAt *time.Time
 	Drifted    bool `gorm:"default:false"`
+
+	// Runtime* hold the last AdGH GET /control/stats snapshot from probe (same cadence as Version/LastPingMs).
+	// Cleared when probe fails or node marked offline; never Hub-aggregated (§9 / architecture §14).
+	RuntimeDNSQueries       *int64     `gorm:"column:runtime_dns_queries"`
+	RuntimeBlockedFiltering *int64     `gorm:"column:runtime_blocked_filtering"`
+	RuntimeAvgProcessingMs  *int64     `gorm:"column:runtime_avg_processing_ms"`
+	RuntimeStatsAt          *time.Time `gorm:"column:runtime_stats_at"`
 }
 
 // NormalizeBaseURL 仅 TrimSpace 并去掉末尾的空白与 `/`，不补 scheme（缺 scheme 的校验在 Step 3）。

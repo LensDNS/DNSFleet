@@ -1,8 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ExternalLinkIcon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import {
+  ExternalLinkIcon,
+  Loader2Icon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import {
   AlertDialog,
@@ -38,9 +45,10 @@ import { SyncTerminalDrawer } from "@/components/sync-terminal-drawer";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { apiFetch, readErrorMessage, readJsonBody, shouldSkipDuplicate401Toast } from "@/lib/api";
 import type { AuthKind, NodeDTO, SyncResponseDTO } from "@/lib/dnsfleet-types";
+import { useFleetNodes } from "@/components/fleet-nodes-provider";
+import { fleetProbeCooldownRemainingMs } from "@/lib/fleet-probe";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { interpolate } from "@/lib/i18n/resolve-message";
-import { mapLimit, probeNode } from "@/lib/nodes";
 import { cn } from "@/lib/utils";
 
 function formatSyncResults(results: SyncResponseDTO["results"]): string {
@@ -55,8 +63,7 @@ function formatSyncResults(results: SyncResponseDTO["results"]): string {
 
 export default function FleetPage() {
   const { t } = useLocale();
-  const [nodes, setNodes] = useState<NodeDTO[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { nodes, loading, fleetProbing, probingIds, refreshNodes, reprobeOne } = useFleetNodes();
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
 
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -68,114 +75,31 @@ export default function FleetPage() {
   const [dialogMode, setDialogMode] = useState<"add" | "edit" | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
   const [formBusy, setFormBusy] = useState(false);
-  const [probeBusyId, setProbeBusyId] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
   const [authKind, setAuthKind] = useState<AuthKind>("basic");
   const [credential, setCredential] = useState("");
 
-  const loadNodes = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetch("/nodes");
-      if (!res.ok) {
-        if (!shouldSkipDuplicate401Toast(res)) {
-          toast.error(await readErrorMessage(res));
-        }
-        setNodes([]);
-        return;
-      }
-      const data = await readJsonBody<unknown>(res);
-      if (!Array.isArray(data)) {
-        toast.error(t("fleet.toast.nodesInvalid"));
-        setNodes([]);
-        return;
-      }
-      setNodes(data as NodeDTO[]);
-    } catch {
-      toast.error(t("fleet.toast.loadFailed"));
-      setNodes([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  const probeCooldownRemainingMs = fleetProbeCooldownRemainingMs();
 
-  /** After refresh, concurrently reprobe offline nodes (max 2), then reload list (uses server AdGHSem; see API docs). */
-  const refreshFleet = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetch("/nodes");
-      if (!res.ok) {
-        if (!shouldSkipDuplicate401Toast(res)) {
-          toast.error(await readErrorMessage(res));
-        }
-        setNodes([]);
-        return;
-      }
-      const data = await readJsonBody<unknown>(res);
-      if (!Array.isArray(data)) {
-        toast.error(t("fleet.toast.nodesInvalid"));
-        setNodes([]);
-        return;
-      }
-      const list = data as NodeDTO[];
-      setNodes(list);
-      const offline = list.filter((n) => !n.online);
-      if (offline.length > 0) {
-        await mapLimit(offline, 2, async (n) => {
-          const pr = await probeNode(n.id);
-          if (!pr.ok) {
-            const msg = await readErrorMessage(pr);
-            if (pr.status === 422 || pr.status === 503) {
-              toast.warning(`${n.name}: ${msg}`);
-            } else if (!shouldSkipDuplicate401Toast(pr)) {
-              toast.error(`${n.name}: ${msg}`);
-            }
-          }
-        });
-        const res2 = await apiFetch("/nodes");
-        if (!res2.ok) {
-          if (!shouldSkipDuplicate401Toast(res2)) {
-            toast.error(await readErrorMessage(res2));
-          }
-          return;
-        }
-        const data2 = await readJsonBody<unknown>(res2);
-        if (Array.isArray(data2)) {
-          setNodes(data2 as NodeDTO[]);
-        }
-      }
-    } catch {
-      toast.error(t("fleet.toast.loadFailed"));
-      setNodes([]);
-    } finally {
-      setLoading(false);
+  const snapshotDescription = useMemo(() => {
+    if (loading) return t("fleet.snapshot.refreshing");
+    if (fleetProbing) {
+      const remaining = probingIds.size;
+      const done = Math.max(0, nodes.length - remaining);
+      return interpolate(t("fleet.snapshot.probingAll"), {
+        done: String(done),
+        total: String(nodes.length),
+      });
     }
-  }, [t]);
-
-  async function reprobeOne(n: NodeDTO) {
-    setProbeBusyId(n.id);
-    try {
-      const pr = await probeNode(n.id);
-      if (!pr.ok) {
-        const msg = await readErrorMessage(pr);
-        if (pr.status === 422 || pr.status === 503) {
-          toast.warning(msg);
-        } else if (!shouldSkipDuplicate401Toast(pr)) {
-          toast.error(msg);
-        }
-        return;
-      }
-      await loadNodes();
-    } finally {
-      setProbeBusyId(null);
+    if (probeCooldownRemainingMs > 0 && !fleetProbing) {
+      return interpolate(t("fleet.snapshot.probeCooldown"), {
+        minutes: String(Math.max(1, Math.ceil(probeCooldownRemainingMs / 60_000))),
+      });
     }
-  }
-
-  useEffect(() => {
-    void Promise.resolve().then(() => loadNodes());
-  }, [loadNodes]);
+    return t("fleet.snapshot.sameRefresh");
+  }, [loading, fleetProbing, probingIds.size, nodes.length, probeCooldownRemainingMs, t]);
 
   const selectedList = useMemo(
     () => nodes.filter((n) => selected.has(n.id)).map((n) => n.id),
@@ -249,7 +173,7 @@ export default function FleetPage() {
         if (res.status === 201) {
           toast.success(t("fleet.toast.created"));
           setDialogMode(null);
-          await loadNodes();
+          await refreshNodes({ backgroundProbe: false });
           return;
         }
         if (res.status === 422) {
@@ -266,7 +190,7 @@ export default function FleetPage() {
       if (res.ok) {
         toast.success(t("fleet.toast.updated"));
         setDialogMode(null);
-        await loadNodes();
+        await refreshNodes({ backgroundProbe: false });
         return;
       }
       if (res.status === 422) {
@@ -290,7 +214,7 @@ export default function FleetPage() {
       setDeleteTarget(null);
       selected.delete(deleteTarget.id);
       setSelected(new Set(selected));
-      await loadNodes();
+      await refreshNodes({ backgroundProbe: false });
       return;
     }
     if (!shouldSkipDuplicate401Toast(res)) {
@@ -345,7 +269,7 @@ export default function FleetPage() {
       setTerminalText(formatSyncResults(parsed.results));
       setTerminalOpen(true);
     }
-    await loadNodes();
+    await refreshNodes({ backgroundProbe: true, quietProbe: false, forceProbe: false });
   }
 
   return (
@@ -360,8 +284,8 @@ export default function FleetPage() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void refreshFleet()}
-            disabled={loading}
+            onClick={() => void refreshNodes({ quietProbe: false, forceProbe: true })}
+            disabled={loading || fleetProbing}
           >
             <RefreshCwIcon className="size-4" />
             {t("fleet.refresh")}
@@ -389,11 +313,14 @@ export default function FleetPage() {
         </div>
       </div>
 
-      {!loading && nodes.length > 0 ? (
-        <Card className="border-dashed">
+      {nodes.length > 0 ? (
+        <Card
+          className={cn("border-dashed", (loading || fleetProbing) && "opacity-80")}
+          aria-busy={loading || fleetProbing}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-base">{t("fleet.snapshot.title")}</CardTitle>
-            <CardDescription className="text-xs">{t("fleet.snapshot.sameRefresh")}</CardDescription>
+            <CardDescription className="text-xs">{snapshotDescription}</CardDescription>
           </CardHeader>
           <CardContent>
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -447,15 +374,23 @@ export default function FleetPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <CardTitle className="text-base">{n.name}</CardTitle>
-                      <span
-                        className="inline-flex size-2.5 shrink-0 rounded-full"
-                        title={n.online ? t("fleet.status.online") : t("fleet.status.offline")}
-                        style={{
-                          backgroundColor: n.online
-                            ? "oklch(0.65 0.2 145)"
-                            : "oklch(0.55 0.2 25)",
-                        }}
-                      />
+                      <span className="inline-flex shrink-0 items-center gap-1">
+                        {probingIds.has(n.id) ? (
+                          <Loader2Icon
+                            className="text-muted-foreground size-3.5 animate-spin"
+                            aria-hidden
+                          />
+                        ) : null}
+                        <span
+                          className="inline-flex size-2.5 rounded-full"
+                          title={n.online ? t("fleet.status.online") : t("fleet.status.offline")}
+                          style={{
+                            backgroundColor: n.online
+                              ? "oklch(0.65 0.2 145)"
+                              : "oklch(0.55 0.2 25)",
+                          }}
+                        />
+                      </span>
                     </div>
                     <CardDescription className="mt-1 flex flex-wrap items-center gap-2">
                       <Badge variant={n.online ? "default" : "secondary"}>
@@ -475,6 +410,65 @@ export default function FleetPage() {
                 ) : (
                   <span className="text-muted-foreground">{t("fleet.drift.no")}</span>
                 )}
+                {n.online ? (
+                  <div className="space-y-1 border-t border-border pt-2 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.queries")}</span>
+                      <span className="font-mono text-foreground">
+                        {n.runtime_dns_queries != null ? String(n.runtime_dns_queries) : "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.blocked")}</span>
+                      <span className="font-mono text-foreground">
+                        {n.runtime_blocked != null ? String(n.runtime_blocked) : "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.blockRatio")}</span>
+                      <span className="font-mono text-foreground">
+                        {n.runtime_block_ratio != null
+                          ? `${(n.runtime_block_ratio * 100).toFixed(1)}%`
+                          : "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.avgMs")}</span>
+                      <span className="font-mono text-foreground">
+                        {n.runtime_avg_processing_ms != null
+                          ? `${n.runtime_avg_processing_ms} ms`
+                          : "—"}
+                      </span>
+                    </div>
+                    {n.runtime_stats_at == null ? (
+                      <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-500 pt-0.5">
+                        {t("fleet.runtime.unavailable")}
+                      </p>
+                    ) : null}
+                    <p className="text-[10px] leading-snug text-muted-foreground pt-0.5">
+                      {t("fleet.runtime.footnote")}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1 border-t border-border pt-2 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.queries")}</span>
+                      <span className="font-mono text-foreground">—</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.blocked")}</span>
+                      <span className="font-mono text-foreground">—</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.blockRatio")}</span>
+                      <span className="font-mono text-foreground">—</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">{t("fleet.runtime.avgMs")}</span>
+                      <span className="font-mono text-foreground">—</span>
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <a
                     href={n.ui_url}
@@ -493,7 +487,7 @@ export default function FleetPage() {
                       type="button"
                       variant="secondary"
                       size="xs"
-                      disabled={probeBusyId === n.id || loading}
+                      disabled={probingIds.has(n.id) || loading}
                       onClick={() => void reprobeOne(n)}
                     >
                       <RefreshCwIcon className="size-3.5" />

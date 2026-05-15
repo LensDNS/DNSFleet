@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/lensdns/dnsfleet/internal/models"
+	"github.com/lensdns/dnsfleet/internal/nodeoffline"
 	"gorm.io/gorm"
 )
 
@@ -29,6 +30,13 @@ type nodeResponse struct {
 	UIURL      string `json:"ui_url"`
 	CreatedAt  int64  `json:"created_at"`
 	UpdatedAt  int64  `json:"updated_at"`
+
+	// AdGH GET /control/stats snapshot from last successful probe (same cadence as version/ping). Null when offline or stats unavailable.
+	RuntimeDNSQueries      *int64   `json:"runtime_dns_queries"`
+	RuntimeBlocked         *int64   `json:"runtime_blocked"`
+	RuntimeBlockRatio      *float64 `json:"runtime_block_ratio"`
+	RuntimeAvgProcessingMs *int64   `json:"runtime_avg_processing_ms"`
+	RuntimeStatsAt         *int64   `json:"runtime_stats_at"`
 }
 
 func toNodeResponse(n *models.Node) nodeResponse {
@@ -37,7 +45,7 @@ func toNodeResponse(n *models.Node) nodeResponse {
 		ms := n.LastSyncAt.UnixMilli()
 		lastSync = &ms
 	}
-	return nodeResponse{
+	out := nodeResponse{
 		ID:         n.ID,
 		Name:       n.Name,
 		BaseURL:    n.BaseURL,
@@ -52,6 +60,29 @@ func toNodeResponse(n *models.Node) nodeResponse {
 		CreatedAt:  n.CreatedAt.UnixMilli(),
 		UpdatedAt:  n.UpdatedAt.UnixMilli(),
 	}
+	if n.RuntimeStatsAt != nil {
+		out.RuntimeDNSQueries = cloneInt64Ptr(n.RuntimeDNSQueries)
+		out.RuntimeBlocked = cloneInt64Ptr(n.RuntimeBlockedFiltering)
+		out.RuntimeAvgProcessingMs = cloneInt64Ptr(n.RuntimeAvgProcessingMs)
+		ms := n.RuntimeStatsAt.UnixMilli()
+		out.RuntimeStatsAt = &ms
+		if n.RuntimeDNSQueries != nil && n.RuntimeBlockedFiltering != nil && *n.RuntimeDNSQueries > 0 {
+			r := float64(*n.RuntimeBlockedFiltering) / float64(*n.RuntimeDNSQueries)
+			if r > 1 {
+				r = 1
+			}
+			out.RuntimeBlockRatio = &r
+		}
+	}
+	return out
+}
+
+func cloneInt64Ptr(p *int64) *int64 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 func parseNodeID(s string) (uint, error) {
@@ -116,7 +147,7 @@ func (r *Routes) postNode(c echo.Context) error {
 	return c.JSON(http.StatusCreated, toNodeResponse(&out))
 }
 
-// postNodeProbe runs GET /control/status for one node (Admin), holding AdGHSem like querylog/sync/drift.
+// postNodeProbe runs GET /control/status and GET /control/stats for one node (Admin), holding AdGHSem like querylog/sync/drift.
 // Does not require the node to be online (mis-detection recovery). Node must exist (404 otherwise).
 func (r *Routes) postNodeProbe(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -145,6 +176,27 @@ func (r *Routes) postNodeProbe(c echo.Context) error {
 	var out models.Node
 	_ = r.Deps.DB.WithContext(ctx).First(&out, id).Error
 	return c.JSON(http.StatusOK, toNodeResponse(&out))
+}
+
+// postMarkNodeOffline sets online=false without calling AdGH (e.g. repeated querylog failures observed by the UI).
+func (r *Routes) postMarkNodeOffline(c echo.Context) error {
+	ctx := c.Request().Context()
+	id, err := parseNodeID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"message": "invalid node id"})
+	}
+	var n models.Node
+	if err := r.Deps.DB.WithContext(ctx).First(&n, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]string{"message": "node not found"})
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "database error")
+	}
+	if err := nodeoffline.Mark(ctx, r.Deps.DB, id); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "database error")
+	}
+	_ = r.Deps.DB.WithContext(ctx).First(&n, id).Error
+	return c.JSON(http.StatusOK, toNodeResponse(&n))
 }
 
 func (r *Routes) patchNode(c echo.Context) error {

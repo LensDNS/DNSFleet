@@ -79,12 +79,26 @@ export const en = {
   "fleet.delete.title": "Delete node?",
   "fleet.delete.description": "Permanently delete “{name}” (id={id}). This cannot be undone.",
   "fleet.syncTerminal.title": "Sync output",
-  "fleet.snapshot.title": "Fleet snapshot",
-  "fleet.snapshot.sameRefresh": "Counts follow the same refresh as the node cards below (Refresh / after sync).",
+  "fleet.snapshot.title": "Fleet overview",
+  "fleet.snapshot.sameRefresh":
+    "Online / offline / drift counts from the same node list as the cards below (not AdGuard runtime metrics). Full-fleet probe runs in the background about every 2 minutes per session.",
+  "fleet.snapshot.refreshing": "Refreshing node list…",
+  "fleet.snapshot.probingAll":
+    "Probing nodes in the background ({done}/{total}) — each card updates online status and runtime metrics as results arrive.",
+  "fleet.snapshot.probeCooldown":
+    "Automatic full-fleet probe paused for about {minutes} min (session). Use Refresh to probe all nodes now.",
   "fleet.snapshot.total": "Nodes",
   "fleet.snapshot.online": "Online",
   "fleet.snapshot.offline": "Offline",
   "fleet.snapshot.drifted": "Drift",
+  "fleet.runtime.queries": "DNS queries",
+  "fleet.runtime.blocked": "Blocked (filter)",
+  "fleet.runtime.blockRatio": "Block ratio",
+  "fleet.runtime.avgMs": "Avg processing",
+  "fleet.runtime.unavailable":
+    "Node is online but AdGuard Home stats were not returned on the last probe (shown as —).",
+  "fleet.runtime.footnote":
+    "Per-node runtime metrics from AdGuard Home’s statistics interval; not DNSFleet history. Updated when that node is probed (background fleet probe, Refresh, or Re-probe).",
 
   "desiredState.title": "Desired State",
   "desiredState.mapsTo": "Maps to",
@@ -114,6 +128,15 @@ export const en = {
   "liveLogs.scope.filterEmpty": "No rows match this filter. Change scope or wait for new logs.",
   "liveLogs.scope.footer":
     "Scope only hides rows in this tab; WebSocket + merge still receive all nodes. Scroll / older_than paging walks the visible list’s tail so it stays aligned with the filtered table.",
+  "liveLogs.streamPause": "Pause stream",
+  "liveLogs.streamResume": "Resume stream",
+  "liveLogs.streamMerging": "Merging…",
+  "liveLogs.streamMerging.hint":
+    "Draining the pause buffer into the table. New live rows still go to the buffer until this finishes.",
+  "liveLogs.streamPaused.hint":
+    "New live rows are held in a small buffer (up to 50) and not merged into the table until you resume. Scroll / older_than history still works; disconnect or language change may discard the buffer. This is not pausedDeep.",
+  "liveLogs.streamPaused.bufferDiscarded":
+    "Discarded {count} buffered live row(s) (WebSocket reconnect or language change).",
   "liveLogs.systemMessages": "System messages",
   "liveLogs.systemEmpty": "(none)",
   "liveLogs.col.time": "Time",

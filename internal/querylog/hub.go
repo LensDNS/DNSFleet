@@ -15,6 +15,7 @@ import (
 	"github.com/lensdns/dnsfleet/internal/adguard"
 	"github.com/lensdns/dnsfleet/internal/config"
 	"github.com/lensdns/dnsfleet/internal/models"
+	"github.com/lensdns/dnsfleet/internal/nodeoffline"
 )
 
 const (
@@ -28,6 +29,9 @@ const (
 	configFetchErrBackoff = 10 * time.Second
 	// warmReplayMaxEntries: max log lines replayed on new Register; must stay below outboundQueueCap (see tryEnqueue backpressure).
 	warmReplayMaxEntries = 128
+	// pollFailMarkOfflineAfter: consecutive GET /control/querylog failures before marking node offline in SQLite.
+	// Keep in sync with web/lib/live-logs-node-health.ts (LIVE_LOGS_QUERYLOG_FAIL_THRESHOLD) and api/DNSFLEET_HTTP_API.md (POST .../mark-offline).
+	pollFailMarkOfflineAfter = 3
 )
 
 type subscriber struct {
@@ -78,6 +82,9 @@ type Hub struct {
 
 	warmMu   sync.Mutex
 	warmRing []warmEntry // FIFO oldest at [0]; cap warmReplayMaxEntries
+
+	pollFailMu     sync.Mutex
+	pollFailStreak map[uint]int
 
 	coordinatorOnce sync.Once
 }
@@ -472,10 +479,37 @@ func (h *Hub) pollNode(node *models.Node) {
 	limit := h.effectiveQueryLogPageLimit()
 	ql, err := cl.GetQueryLog(h.ctx, "", 0, limit, "all", "")
 	if err != nil {
+		h.recordPollFailure(node)
 		h.emitUpstreamError(node, err)
 		return
 	}
+	h.clearPollFailure(node.ID)
 	h.emitQueryLogData(node, d, ql.Data)
+}
+
+func (h *Hub) recordPollFailure(node *models.Node) {
+	if node == nil {
+		return
+	}
+	h.pollFailMu.Lock()
+	defer h.pollFailMu.Unlock()
+	if h.pollFailStreak == nil {
+		h.pollFailStreak = make(map[uint]int)
+	}
+	h.pollFailStreak[node.ID]++
+	if h.pollFailStreak[node.ID] < pollFailMarkOfflineAfter {
+		return
+	}
+	delete(h.pollFailStreak, node.ID)
+	_ = nodeoffline.Mark(h.ctx, h.db, node.ID)
+}
+
+func (h *Hub) clearPollFailure(id uint) {
+	h.pollFailMu.Lock()
+	defer h.pollFailMu.Unlock()
+	if h.pollFailStreak != nil {
+		delete(h.pollFailStreak, id)
+	}
 }
 
 func (h *Hub) emitQueryLogData(node *models.Node, d *boundedDedupe, data []json.RawMessage) {

@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -30,8 +31,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useFleetNodes } from "@/components/fleet-nodes-provider";
 import { isSkipAdminAuth } from "@/lib/auth-token";
 import type { NodeDTO, WsLogMessage } from "@/lib/dnsfleet-types";
+import { QuerylogFailureTracker } from "@/lib/live-logs-node-health";
 import {
   entryDetailSections,
   entryTimeToMs,
@@ -47,9 +50,10 @@ import {
   MAX_MERGED_LOG_LINES,
   mergeNewestFirstDedupeIncremental,
   mergeSortedDedupeRows,
+  pushFifoCap,
   recomputePausedDeep,
 } from "@/lib/live-logs-merge";
-import { fetchNodeQueryLog, fetchNodes } from "@/lib/node-querylog";
+import { fetchNodeQueryLog } from "@/lib/node-querylog";
 import { buildLogsWebSocketUrl } from "@/lib/ws-logs-url";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { interpolate } from "@/lib/i18n/resolve-message";
@@ -146,6 +150,9 @@ function stableEntryTimeToken(entryTime: unknown): string {
 /** Max concurrent `logRowDedupeKeyHex` (SHA-256) calls per WS batch without fingerprint (PR4 client path). */
 const WS_DIGEST_CONCURRENCY = 3;
 
+/** Live stream pause buffer cap (FIFO drop oldest). */
+const STREAM_PAUSE_BUFFER_CAP = 50;
+
 type WsPendingEntry = {
   nodeId: number;
   nodeName: string;
@@ -180,6 +187,42 @@ async function buildLogRowsDigestLimited(items: WsPendingEntry[]): Promise<LogRo
   return out;
 }
 
+function stowWsEntriesInPausedBuffer(buf: WsPendingEntry[], items: WsPendingEntry[]): void {
+  for (const item of items) {
+    pushFifoCap(buf, item, STREAM_PAUSE_BUFFER_CAP);
+  }
+}
+
+async function mergeWsPendingBatchInto(current: LogRow[], batch: WsPendingEntry[]): Promise<LogRow[]> {
+  if (batch.length === 0) return current;
+  const syncBuilt: LogRow[] = [];
+  const asyncRemainder: WsPendingEntry[] = [];
+  for (const item of batch) {
+    if (item.fingerprint !== undefined && isWsFingerprintHex(item.fingerprint)) {
+      try {
+        syncBuilt.push(
+          buildLogRowSync(item.nodeId, item.nodeName, item.entry, item.receivedAt, item.fingerprint),
+        );
+      } catch {
+        // skip malformed
+      }
+    } else {
+      asyncRemainder.push(item);
+    }
+  }
+  let merged = current;
+  if (syncBuilt.length > 0) {
+    merged = mergeNewestFirstDedupeIncremental(merged, syncBuilt);
+  }
+  if (asyncRemainder.length > 0) {
+    const built = await buildLogRowsDigestLimited(asyncRemainder);
+    if (built.length > 0) {
+      merged = mergeNewestFirstDedupeIncremental(merged, built);
+    }
+  }
+  return merged;
+}
+
 type LogRowsModel = { logRows: LogRow[]; pausedDeep: Record<number, boolean> };
 
 type LogRowsDispatchAction =
@@ -199,6 +242,7 @@ function logRowsReducer(state: LogRowsModel, action: LogRowsDispatchAction): Log
 
 export default function LiveLogsPage() {
   const { t, locale } = useLocale();
+  const { nodes: fleetNodes, loading: fleetNodesLoading, mergeNode } = useFleetNodes();
   const tRef = useRef(t);
   useEffect(() => {
     tRef.current = t;
@@ -216,8 +260,9 @@ export default function LiveLogsPage() {
   const [detail, setDetail] = useState<LogRow | null>(null);
   const [initialLoad, setInitialLoad] = useState<"loading" | "ready">("loading");
   const [nodeTails, setNodeTails] = useState<Record<number, NodeTailState>>({});
-  const [fleetNodes, setFleetNodes] = useState<NodeDTO[]>([]);
   const [logScopeFilter, setLogScopeFilter] = useState<string>("all");
+  const [streamPaused, setStreamPaused] = useState(false);
+  const [streamMerging, setStreamMerging] = useState(false);
 
   const logRowsRef = useRef(logRows);
   const nodeTailsRef = useRef(nodeTails);
@@ -237,6 +282,9 @@ export default function LiveLogsPage() {
   const userEngagedBottomRef = useRef(false);
   const pageSession = useRef(0);
   const visibleRowsRef = useRef<LogRow[]>([]);
+  const pausedWsBufferRef = useRef<WsPendingEntry[]>([]);
+  const streamPausedRef = useRef(false);
+  const streamMergingRef = useRef(false);
   const pendingWsEntries = useRef<
     {
       nodeId: number;
@@ -247,6 +295,25 @@ export default function LiveLogsPage() {
     }[]
   >([]);
   const wsFlushRaf = useRef<number | null>(null);
+  const fleetNodesRef = useRef(fleetNodes);
+  const querylogFailuresRef = useRef(new QuerylogFailureTracker());
+  const onQuerylogMarkedOfflineRef = useRef<(updated: NodeDTO | null) => void>(() => {});
+  useEffect(() => {
+    fleetNodesRef.current = fleetNodes;
+  }, [fleetNodes]);
+  useEffect(() => {
+    onQuerylogMarkedOfflineRef.current = (updated) => {
+      if (updated) mergeNode(updated);
+    };
+  }, [mergeNode]);
+  const recordQuerylogFailure = useCallback((nodeId: number) => {
+    void querylogFailuresRef.current.recordFailure(nodeId, (updated) => {
+      onQuerylogMarkedOfflineRef.current(updated);
+    });
+  }, []);
+  const clearQuerylogFailure = useCallback((nodeId: number) => {
+    querylogFailuresRef.current.clear(nodeId);
+  }, []);
 
   const onlineNodeIds = useMemo(
     () => new Set(fleetNodes.filter((n) => n.online).map((n) => n.id)),
@@ -263,6 +330,24 @@ export default function LiveLogsPage() {
     if (!Number.isFinite(nid)) return logRows;
     return logRows.filter((r) => r.nodeId === nid);
   }, [logRows, logScopeFilter, onlineNodeIds]);
+
+  const scopePickerNodes = useMemo(() => {
+    const sorted = [...fleetNodes].sort((a, b) => a.name.localeCompare(b.name));
+    if (logScopeFilter === "online") {
+      return sorted.filter((n) => n.online);
+    }
+    return sorted;
+  }, [fleetNodes, logScopeFilter]);
+
+  useEffect(() => {
+    if (!logScopeFilter.startsWith("node:")) return;
+    const nid = Number(logScopeFilter.slice("node:".length));
+    if (!Number.isFinite(nid)) return;
+    const node = fleetNodes.find((n) => n.id === nid);
+    if (node && !node.online) {
+      setLogScopeFilter("all");
+    }
+  }, [fleetNodes, logScopeFilter]);
 
   // TanStack's virtualizer identity can change every render; drive layout/resize measure() via ref
   // so effects do not resubscribe every frame. React Compiler skips memoizing this hook (see eslint below).
@@ -330,6 +415,10 @@ export default function LiveLogsPage() {
   useEffect(() => {
     visibleRowsRef.current = visibleRows;
   }, [visibleRows]);
+
+  useEffect(() => {
+    streamPausedRef.current = streamPaused;
+  }, [streamPaused]);
 
   useEffect(() => {
     const session = pageSession;
@@ -420,10 +509,12 @@ export default function LiveLogsPage() {
           nextOlderThan: ql.oldest === "" ? null : ql.oldest,
         },
       }));
+      clearQuerylogFailure(pickedNodeId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg !== "AbortError" && !msg.includes("aborted")) {
         toast.warning(`${tRef.current("liveLogs.toast.loadOlderFailed")} ${msg}`);
+        recordQuerylogFailure(pickedNodeId);
       }
     } finally {
       globalOlderBusy.current = false;
@@ -431,6 +522,26 @@ export default function LiveLogsPage() {
         loadOlderAbortRef.current = null;
       }
       olderInFlight.current.delete(pickedNodeId);
+    }
+  }, [clearQuerylogFailure, recordQuerylogFailure]);
+
+  const resumeStreamMerge = useCallback(async () => {
+    if (streamMergingRef.current) return;
+    streamMergingRef.current = true;
+    setStreamMerging(true);
+    streamPausedRef.current = true;
+    try {
+      while (pausedWsBufferRef.current.length > 0) {
+        const batch = pausedWsBufferRef.current.splice(0);
+        const merged = await mergeWsPendingBatchInto(logRowsRef.current, batch);
+        logRowsRef.current = merged;
+        dispatchLogRows({ type: "applyMerged", merged });
+      }
+    } finally {
+      streamMergingRef.current = false;
+      setStreamMerging(false);
+      setStreamPaused(false);
+      streamPausedRef.current = false;
     }
   }, []);
 
@@ -507,6 +618,7 @@ export default function LiveLogsPage() {
    */
   useEffect(() => {
     if (initialLoad !== "ready") return;
+    if (streamPausedRef.current) return;
     const el = scrollRef.current;
     if (!el || logRows.length === 0) return;
     const short = el.scrollHeight <= el.clientHeight + 8;
@@ -525,7 +637,10 @@ export default function LiveLogsPage() {
     const io = new IntersectionObserver(
       (entries) => {
         for (const ent of entries) {
-          if (ent.isIntersecting) void loadOlderPage();
+          if (ent.isIntersecting) {
+            if (streamPausedRef.current) return;
+            void loadOlderPage();
+          }
         }
       },
       { root, rootMargin: "160px 0px", threshold: 0 },
@@ -535,6 +650,7 @@ export default function LiveLogsPage() {
   }, [logRows.length, nodeTails, initialLoad, loadOlderPage, visibleRows.length, historyStatusMessage]);
 
   useEffect(() => {
+    if (fleetNodesLoading) return;
     const gen = ++fetchGen.current;
     const ac = new AbortController();
 
@@ -542,9 +658,7 @@ export default function LiveLogsPage() {
       setInitialLoad("loading");
       userEngagedBottomRef.current = false;
       try {
-        const nodes = await fetchNodes(ac.signal);
-        if (gen !== fetchGen.current) return;
-        setFleetNodes(nodes);
+        const nodes = fleetNodesRef.current;
         const online = nodes.filter((n) => n.online);
         if (online.length === 0) {
           setNodeTails({});
@@ -564,25 +678,34 @@ export default function LiveLogsPage() {
           }),
         );
 
+        // Stale run (e.g. locale changed): do not touch QuerylogFailureTracker or build rows for a discarded session.
+        if (gen !== fetchGen.current) return;
+
         const incoming: LogRow[] = [];
         const tails: Record<number, NodeTailState> = {};
         const receivedAt = Date.now();
 
-        for (const r of settled) {
+        for (let i = 0; i < settled.length; i++) {
+          if (gen !== fetchGen.current) return;
+          const r = settled[i];
+          const node = online[i];
           if (r.status === "rejected") {
             const err = r.reason;
             if (err instanceof Error && err.message.includes("aborted")) continue;
             const msg = err instanceof Error ? err.message : String(err);
             toast.warning(`${tRef.current("liveLogs.toast.firstPageWarn")} ${msg}`);
+            recordQuerylogFailure(node.id);
             continue;
           }
-          const { node, ql } = r.value;
-          tails[node.id] = {
+          clearQuerylogFailure(node.id);
+          const { node: n, ql } = r.value;
+          tails[n.id] = {
             exhausted: ql.oldest === "",
             nextOlderThan: ql.oldest === "" ? null : ql.oldest,
           };
           for (const entry of ql.data) {
-            incoming.push(await buildLogRow(node.id, node.name, entry, receivedAt));
+            incoming.push(await buildLogRow(n.id, n.name, entry, receivedAt));
+            if (gen !== fetchGen.current) return;
           }
         }
 
@@ -603,7 +726,7 @@ export default function LiveLogsPage() {
     return () => {
       ac.abort();
     };
-  }, [locale]);
+  }, [locale, fleetNodesLoading, clearQuerylogFailure, recordQuerylogFailure]);
 
   useEffect(() => {
     const built = buildLogsWebSocketUrl();
@@ -667,6 +790,10 @@ export default function LiveLogsPage() {
     function flushPendingOnDisconnect() {
       const batch = pendingWsEntries.current.splice(0);
       if (batch.length === 0) return;
+      if (streamPausedRef.current) {
+        stowWsEntriesInPausedBuffer(pausedWsBufferRef.current, batch);
+        return;
+      }
       const syncBuilt: LogRow[] = [];
       const asyncRemainder: typeof batch = [];
       for (const item of batch) {
@@ -689,8 +816,13 @@ export default function LiveLogsPage() {
       if (asyncRemainder.length === 0) return;
       enqueueWsPostSpliceWork(async () => {
         if (cancelled) return;
+        if (streamPausedRef.current) {
+          stowWsEntriesInPausedBuffer(pausedWsBufferRef.current, asyncRemainder);
+          return;
+        }
         const built = await buildLogRowsDigestLimited(asyncRemainder);
         if (cancelled || built.length === 0) return;
+        if (streamPausedRef.current) return;
         const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, built);
         applyWsMerged(merged);
       });
@@ -699,10 +831,19 @@ export default function LiveLogsPage() {
     function flushWsPending() {
       const batch = pendingWsEntries.current.splice(0);
       if (batch.length === 0) return;
+      if (streamPausedRef.current) {
+        stowWsEntriesInPausedBuffer(pausedWsBufferRef.current, batch);
+        return;
+      }
       enqueueWsPostSpliceWork(async () => {
         if (cancelled) return;
+        if (streamPausedRef.current) {
+          stowWsEntriesInPausedBuffer(pausedWsBufferRef.current, batch);
+          return;
+        }
         const built = await buildLogRowsDigestLimited(batch);
         if (cancelled || built.length === 0) return;
+        if (streamPausedRef.current) return;
         const merged = mergeNewestFirstDedupeIncremental(logRowsRef.current, built);
         applyWsMerged(merged);
       });
@@ -779,6 +920,14 @@ export default function LiveLogsPage() {
             typeof msg.node_id === "number" && Number.isFinite(msg.node_id) ? msg.node_id : 0;
           const nodeName = typeof msg.node_name === "string" ? msg.node_name : "";
           const fingerprint = typeof msg.fingerprint === "string" ? msg.fingerprint : undefined;
+          if (streamPausedRef.current) {
+            pushFifoCap(
+              pausedWsBufferRef.current,
+              { nodeId, nodeName, entry, receivedAt, fingerprint },
+              STREAM_PAUSE_BUFFER_CAP,
+            );
+            return;
+          }
           pendingWsEntries.current.push({ nodeId, nodeName, entry, receivedAt, fingerprint });
           scheduleWsFlush();
         }
@@ -815,6 +964,19 @@ export default function LiveLogsPage() {
         wsFlushRaf.current = null;
       }
       flushPendingOnDisconnect();
+      const discarded = pausedWsBufferRef.current.length;
+      if (discarded > 0) {
+        pausedWsBufferRef.current = [];
+        void Promise.resolve().then(() => {
+          toast.info(
+            interpolate(tRef.current("liveLogs.streamPaused.bufferDiscarded"), {
+              count: String(discarded),
+            }),
+          );
+        });
+      }
+      streamMergingRef.current = false;
+      void Promise.resolve().then(() => setStreamMerging(false));
       cancelled = true;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       if (ws) {
@@ -882,33 +1044,62 @@ export default function LiveLogsPage() {
           <p className="text-muted-foreground mt-0.5 text-xs">{t("liveLogs.multiTabHint")}</p>
         ) : null}
         <p className="text-muted-foreground mt-0.5 text-[11px] leading-snug">{t("liveLogs.mergeReorderNote")}</p>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <Label htmlFor="live-logs-scope" className="text-muted-foreground shrink-0 text-xs">
-            {t("liveLogs.scope.label")}
-          </Label>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <Label htmlFor="live-logs-scope" className="text-muted-foreground shrink-0 text-xs">
+              {t("liveLogs.scope.label")}
+            </Label>
+            <Button
+              type="button"
+              variant={streamPaused ? "default" : "outline"}
+              size="sm"
+              className="shrink-0 self-start sm:self-auto"
+              aria-pressed={streamPaused}
+              aria-busy={streamMerging}
+              disabled={streamMerging}
+              onClick={() => {
+                if (streamMerging) return;
+                if (streamPaused) {
+                  void resumeStreamMerge();
+                } else {
+                  streamPausedRef.current = true;
+                  setStreamPaused(true);
+                }
+              }}
+            >
+              {streamMerging
+                ? t("liveLogs.streamMerging")
+                : streamPaused
+                  ? t("liveLogs.streamResume")
+                  : t("liveLogs.streamPause")}
+            </Button>
+          </div>
           <Select
             value={logScopeFilter}
             onValueChange={(v) => {
               if (v != null && v !== "") setLogScopeFilter(v);
             }}
           >
-            <SelectTrigger id="live-logs-scope" className="w-full sm:max-w-md">
+            <SelectTrigger id="live-logs-scope" className="w-full sm:max-w-md sm:flex-1">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t("liveLogs.scope.all")}</SelectItem>
               <SelectItem value="online">{t("liveLogs.scope.onlineOnly")}</SelectItem>
-              {fleetNodes
-                .slice()
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((n) => (
-                  <SelectItem key={n.id} value={`node:${n.id}`}>
-                    {interpolate(t("liveLogs.scope.nodeOption"), { name: n.name, id: String(n.id) })}
-                  </SelectItem>
-                ))}
+              {scopePickerNodes.map((n) => (
+                <SelectItem key={n.id} value={`node:${n.id}`}>
+                  {interpolate(t("liveLogs.scope.nodeOption"), { name: n.name, id: String(n.id) })}
+                  {!n.online ? ` — ${t("fleet.status.offline")}` : ""}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
+        {streamPaused || streamMerging ? (
+          <p className="text-muted-foreground mt-1 text-[11px] leading-snug">
+            {streamMerging ? t("liveLogs.streamMerging.hint") : t("liveLogs.streamPaused.hint")}
+          </p>
+        ) : null}
         <p className="text-muted-foreground mt-1 text-[11px] leading-snug">{t("liveLogs.scope.footer")}</p>
       </div>
 

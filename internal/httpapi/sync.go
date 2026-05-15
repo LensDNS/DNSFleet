@@ -201,6 +201,8 @@ func (r *Routes) postSync(c echo.Context) error {
 				// GET /control/status. Re-probe here so Online/Version/LastPingMs match status after a successful push
 				// (and operators see /control/status alongside dns_* traffic when capturing).
 				_ = probeAndPersist(ctx, r.Deps.DB, n.ID)
+				// Re-compare desired vs actual (same logic as drift loop) so Drifted reflects post-sync reality.
+				driftOneNode(ctx, r.Deps, n.ID, upstream, rewJSON)
 			}
 			mu.Lock()
 			results = append(results, res)

@@ -14,6 +14,12 @@ export interface NodeDTO {
   ui_url: string;
   created_at: number;
   updated_at: number;
+  /** Last AdGH GET /control/stats at probe; absent or null when offline or unavailable. */
+  runtime_dns_queries?: number | null;
+  runtime_blocked?: number | null;
+  runtime_block_ratio?: number | null;
+  runtime_avg_processing_ms?: number | null;
+  runtime_stats_at?: number | null;
 }
 
 export interface GlobalConfigDTO {

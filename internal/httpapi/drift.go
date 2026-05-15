@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lensdns/dnsfleet/internal/models"
+	"github.com/lensdns/dnsfleet/internal/nodeoffline"
 	"gorm.io/gorm"
 )
 
@@ -50,11 +51,7 @@ func runDriftOnce(ctx context.Context, deps Deps) {
 }
 
 func markNodeOfflineDrift(db *gorm.DB, ctx context.Context, id uint) {
-	_ = db.WithContext(ctx).Model(&models.Node{}).Where("id = ?", id).Select("Online", "Version", "LastPingMs").Updates(&models.Node{
-		Online:     false,
-		Version:    "",
-		LastPingMs: 0,
-	}).Error
+	_ = nodeoffline.Mark(ctx, db, id)
 }
 
 func driftOneNode(ctx context.Context, deps Deps, id uint, upstream string, expectedRew []byte) {

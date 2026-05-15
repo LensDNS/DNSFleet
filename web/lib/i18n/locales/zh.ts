@@ -81,12 +81,25 @@ export const zh: Record<LocaleKey, string> = {
   "fleet.delete.title": "删除节点？",
   "fleet.delete.description": "将永久删除「{name}」（id={id}），不可恢复。",
   "fleet.syncTerminal.title": "同步输出",
-  "fleet.snapshot.title": "机群快照",
-  "fleet.snapshot.sameRefresh": "与下方节点卡片使用同一刷新来源（「刷新」或同步完成后重新加载列表）。",
+  "fleet.snapshot.title": "机群概览",
+  "fleet.snapshot.sameRefresh":
+    "在线 / 离线 / 漂移数量与下方节点卡片同源（非 AdGuard 运行态指标汇总）。本会话约每 2 分钟自动后台探测一次全舰队。",
+  "fleet.snapshot.refreshing": "正在刷新节点列表…",
+  "fleet.snapshot.probingAll":
+    "正在后台逐台探测（{done}/{total}）— 每台完成后该卡片会更新在线状态与运行态指标。",
+  "fleet.snapshot.probeCooldown":
+    "本会话内自动全量探测冷却约 {minutes} 分钟；点「刷新」可立即探测全部节点。",
   "fleet.snapshot.total": "节点总数",
   "fleet.snapshot.online": "在线",
   "fleet.snapshot.offline": "离线",
   "fleet.snapshot.drifted": "漂移",
+  "fleet.runtime.queries": "DNS 查询数",
+  "fleet.runtime.blocked": "拦截（过滤）",
+  "fleet.runtime.blockRatio": "拦截占比",
+  "fleet.runtime.avgMs": "平均处理",
+  "fleet.runtime.unavailable": "节点在线，但上次探测未返回 AdGuard Home 统计（故显示 —）。",
+  "fleet.runtime.footnote":
+    "卡片内为单节点 AdGuard Home 统计周期指标，非 DNSFleet 历史。在该节点被探测后更新（后台逐台探测、「刷新」或「重探测」）。",
 
   "desiredState.title": "期望配置",
   "desiredState.mapsTo": "对应",
@@ -116,6 +129,13 @@ export const zh: Record<LocaleKey, string> = {
   "liveLogs.scope.filterEmpty": "当前过滤下没有可显示的行。请更换范围或等待新日志。",
   "liveLogs.scope.footer":
     "范围仅影响本页表格展示；WebSocket 与内存合并仍接收全部节点。滚底与 older_than 分页按「可见列表」尾部选择节点，与过滤后的表格对齐。",
+  "liveLogs.streamPause": "暂停实时流",
+  "liveLogs.streamResume": "继续实时流",
+  "liveLogs.streamMerging": "合并中…",
+  "liveLogs.streamMerging.hint": "正在将暂停缓冲写入表格；完成前新实时行仍进入缓冲。",
+  "liveLogs.streamPaused.hint":
+    "新的实时行暂存在小缓冲（最多 50 条），恢复后才合并进表格；滚底与 older_than 读历史不受影响；断线或切换语言可能丢弃缓冲。与 pausedDeep 无关。",
+  "liveLogs.streamPaused.bufferDiscarded": "已丢弃 {count} 条缓冲的实时行（WebSocket 重连或切换语言）。",
   "liveLogs.systemMessages": "系统消息",
   "liveLogs.systemEmpty": "（暂无）",
   "liveLogs.col.time": "时间",

@@ -31,6 +31,13 @@ func adguardWithQuerylogHandler(t *testing.T, querylogHook func(w http.ResponseW
 		case strings.HasSuffix(p, "/control/status") && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"version": "v-mock"})
+		case strings.HasSuffix(p, "/control/stats") && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"num_dns_queries":       100,
+				"num_blocked_filtering": 10,
+				"avg_processing_time":   0.005,
+			})
 		case strings.HasSuffix(p, "/control/dns_info") && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"upstream_dns": []string{"1.1.1.1"}})

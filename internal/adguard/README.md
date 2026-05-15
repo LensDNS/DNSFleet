@@ -18,6 +18,7 @@ Single source of truth: [`api/ADGUARD_HOME_CONTROL_API.md`](../../api/ADGUARD_HO
 | Method | AdGH paths | Notes |
 |--------|------------|--------|
 | `(*Client) GetStatus(ctx)` | `GET /control/status` | Loose JSON decode; at least `version` is populated when present. |
+| `(*Client) GetStats(ctx)` | `GET /control/stats` | Minimal `Stats` decode (`num_dns_queries`, `num_blocked_filtering`, `avg_processing_time` seconds). No `recent` query in v0.1.4. |
 | `(*Client) GetDNSConfig(ctx)` | `GET /control/dns_info` | Decodes the **`DNSConfig`** object; extra top-level keys from `dns_info` **allOf** are ignored. |
 | `(*Client) SetUpstreamDNSFromGlobalText(ctx, upstreamLines)` | `GET /control/dns_info`, `POST /control/dns_config` | Read–modify–write: replaces only `upstream_dns` from multi-line text (see §1.3 upstream `GlobalConfig`: non-empty trimmed lines). |
 | `(*Client) ListRewrites(ctx)` | `GET /control/rewrite/list` | Returns `[]RewriteEntry` (empty slice if null). |

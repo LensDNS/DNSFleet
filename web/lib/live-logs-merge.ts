@@ -173,6 +173,12 @@ export function recomputePausedDeep(rows: { nodeId: number; timeMs: number }[]):
   return out;
 }
 
+/** FIFO push with cap; drops oldest when full (Live Logs stream pause buffer). */
+export function pushFifoCap<T>(buf: T[], item: T, cap: number): void {
+  buf.push(item);
+  while (buf.length > cap) buf.shift();
+}
+
 export async function logRowDedupeKeyHex(nodeId: number, entry: Record<string, unknown>): Promise<string> {
   const raw = `${nodeId}\n${JSON.stringify(entry)}`;
   const buf = new TextEncoder().encode(raw);

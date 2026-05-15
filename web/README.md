@@ -89,6 +89,10 @@ The **`/live-logs`** merged table uses viewport virtualization (`@tanstack/react
 
 **Scope filter (All / online only / one node)** on `/live-logs` only hides rows in the table; the in-memory merge and WebSocket stream still carry every node. **`older_than` pagination, scroll-to-bottom, and the bottom `IntersectionObserver` pick the next page using the tail of that visible (filtered) list**, so deep history stays tied to what you are looking at, not the hidden global buffer tail.
 
+**Stream pause (`streamPaused`)** holds incoming live `log` rows in a small client buffer (FIFO cap 50) without merging them into the table until you resume; the WebSocket stays open, system messages still update, and manual / scroll-driven `older_than` history loads are unchanged. While paused, in-flight WS flush batches and disconnect drains also go to the buffer (not the table). **Resume** loops until the buffer is empty (then unpauses); reconnect / **language** change may discard buffered rows with a toast. This is separate from **`pausedDeep`** (per-node deep-scroll pause when time skew makes `older_than` unsafe) and from stopping the Hub or SQLite.
+
+**Fleet runtime fields** (`runtime_*` on `/fleet`) come from AdGuard Home `GET /control/stats` during node **probe** or fleet **refresh** (including reprobe on offline nodes); loading the list alone does not refresh stats.
+
 **Profiler（人工门槛）**：性能相关改动请在 **同机**、**production build** 下用 React Profiler 各录一段前后对比，关注 **Scripting** / **Layout** 与 `LiveLogsPage` 的 commit 次数；首屏多节点 REST 在 **无** `fingerprint` 时仍有 **每行 SHA-256** 成本（与 WS 尾包 digest 不同线）。无 `fingerprint` 的 WS 待处理批次在客户端以 **有界并发**（`live-logs/page.tsx` 内常量）跑 `buildLogRow`，避免无界 `Promise.all` 拉长单帧尖峰。
 
 ## Production build（嵌入二进制 / Docker）

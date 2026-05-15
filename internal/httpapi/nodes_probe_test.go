@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -36,6 +37,21 @@ func TestPostNodeProbe_success_updates_online(t *testing.T) {
 	}
 	if !out.Online || out.Version != "v-mock" {
 		t.Fatalf("unexpected %+v", out)
+	}
+	if out.RuntimeDNSQueries == nil || *out.RuntimeDNSQueries != 100 {
+		t.Fatalf("runtime_dns_queries: %+v", out.RuntimeDNSQueries)
+	}
+	if out.RuntimeBlocked == nil || *out.RuntimeBlocked != 10 {
+		t.Fatalf("runtime_blocked: %+v", out.RuntimeBlocked)
+	}
+	if out.RuntimeAvgProcessingMs == nil || *out.RuntimeAvgProcessingMs != 5 {
+		t.Fatalf("runtime_avg_processing_ms: %+v", out.RuntimeAvgProcessingMs)
+	}
+	if out.RuntimeStatsAt == nil || *out.RuntimeStatsAt <= 0 {
+		t.Fatalf("runtime_stats_at: %+v", out.RuntimeStatsAt)
+	}
+	if out.RuntimeBlockRatio == nil || math.Abs(*out.RuntimeBlockRatio-0.1) > 1e-9 {
+		t.Fatalf("runtime_block_ratio: %+v", out.RuntimeBlockRatio)
 	}
 }
 

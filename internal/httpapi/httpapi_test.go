@@ -159,6 +159,13 @@ func adguardOKHandler() http.Handler {
 		case strings.HasSuffix(p, "/control/status") && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"version": "v-mock"})
+		case strings.HasSuffix(p, "/control/stats") && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"num_dns_queries":       100,
+				"num_blocked_filtering": 10,
+				"avg_processing_time":   0.005,
+			})
 		case strings.HasSuffix(p, "/control/dns_info") && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"upstream_dns": []string{"1.1.1.1"}})
@@ -330,13 +337,13 @@ func TestSyncAllOnline(t *testing.T) {
 	// Seed one online node.
 	n := &models.Node{
 		Name: "x", BaseURL: ag.URL, Username: "u", Credential: "p",
-		AuthKind: models.AuthKindBasic, Online: true, Version: "v-mock",
+		AuthKind: models.AuthKindBasic, Online: true, Version: "v-mock", Drifted: true,
 	}
 	if err := db.Create(n).Error; err != nil {
 		t.Fatal(err)
 	}
 	// Global config rows
-	if err := db.Create(&models.GlobalConfig{Type: models.GlobalConfigTypeUpstream, Content: "8.8.8.8"}).Error; err != nil {
+	if err := db.Create(&models.GlobalConfig{Type: models.GlobalConfigTypeUpstream, Content: "1.1.1.1"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&models.GlobalConfig{Type: models.GlobalConfigTypeRewrite, Content: "[]"}).Error; err != nil {
@@ -364,6 +371,9 @@ func TestSyncAllOnline(t *testing.T) {
 	}
 	if after.LastSyncAt == nil {
 		t.Fatal("expected LastSyncAt set")
+	}
+	if after.Drifted {
+		t.Fatal("expected Drifted cleared after successful sync")
 	}
 }
 

@@ -8,6 +8,7 @@ import {
   mergeNewestFirstDedupeIncremental,
   mergeSortedDedupeRows,
   NODE_DEEP_PAUSE_GAP_MS,
+  pushFifoCap,
   recomputePausedDeep,
 } from "./live-logs-merge";
 
@@ -211,5 +212,17 @@ describe("recomputePausedDeep", () => {
     const p = recomputePausedDeep(rows);
     expect(p[1]).toBe(false);
     expect(p[2]).toBe(true);
+  });
+});
+
+describe("pushFifoCap", () => {
+  it("drops oldest when over cap", () => {
+    const buf: number[] = [];
+    pushFifoCap(buf, 1, 3);
+    pushFifoCap(buf, 2, 3);
+    pushFifoCap(buf, 3, 3);
+    expect(buf).toEqual([1, 2, 3]);
+    pushFifoCap(buf, 4, 3);
+    expect(buf).toEqual([2, 3, 4]);
   });
 });

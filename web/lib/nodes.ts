@@ -1,8 +1,37 @@
-import { apiFetch } from "@/lib/api";
+import { apiFetch, readErrorMessage, readJsonBody } from "@/lib/api";
+import type { NodeDTO } from "@/lib/dnsfleet-types";
 
 /** Admin `POST /api/v1/nodes/:id/probe` — dedicated probe route (uses AdGHSem server-side). */
 export function probeNode(id: number): Promise<Response> {
   return apiFetch(`/nodes/${id}/probe`, { method: "POST" });
+}
+
+export type ProbeNodeResult = {
+  ok: boolean;
+  status: number;
+  node: NodeDTO | null;
+  message: string;
+};
+
+/** Probe one node; returns updated `NodeDTO` (200 body or 422 `node` field) when available. */
+export async function probeNodeDto(id: number): Promise<ProbeNodeResult> {
+  const res = await probeNode(id);
+  const data = await readJsonBody<Partial<NodeDTO> & { node?: NodeDTO; message?: string }>(res);
+  let node: NodeDTO | null = null;
+  if (data && typeof data === "object") {
+    if (data.node && typeof data.node.id === "number") {
+      node = data.node;
+    } else if (typeof data.id === "number") {
+      node = data as NodeDTO;
+    }
+  }
+  const message =
+    data && typeof data.message === "string" && data.message !== ""
+      ? data.message
+      : res.ok
+        ? ""
+        : await readErrorMessage(res);
+  return { ok: res.ok, status: res.status, node, message };
 }
 
 /**
