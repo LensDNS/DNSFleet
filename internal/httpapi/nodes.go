@@ -87,8 +87,11 @@ func cloneInt64Ptr(p *int64) *int64 {
 
 func parseNodeID(s string) (uint, error) {
 	v, err := strconv.ParseUint(s, 10, 64)
-	if err != nil || v < 1 {
+	if err != nil {
 		return 0, err
+	}
+	if v < 1 {
+		return 0, errors.New("invalid node id")
 	}
 	return uint(v), nil
 }
