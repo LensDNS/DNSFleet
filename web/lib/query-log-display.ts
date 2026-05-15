@@ -50,7 +50,7 @@ export interface NormalizedQueryLogEntry {
   upstream: string;
   reason: string;
   elapsedMsLabel: string;
-  /** Extra hint for response summary cell (e.g. cached). */
+  /** Optional extra hint for response summary cell (cache hits use Badge only, not this field). */
   responseExtra: string;
 }
 
@@ -368,8 +368,7 @@ export function normalizeEntry(entry: Record<string, unknown>): NormalizedQueryL
   const clientPrimary = dash(primary);
   const clientSecondary = secondary.trim();
 
-  let responseExtra = "";
-  if (entry.cached === true) responseExtra = "cached";
+  const responseExtra = "";
 
   return {
     questionName: dash(name),

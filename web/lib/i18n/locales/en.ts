@@ -79,6 +79,12 @@ export const en = {
   "fleet.delete.title": "Delete node?",
   "fleet.delete.description": "Permanently delete “{name}” (id={id}). This cannot be undone.",
   "fleet.syncTerminal.title": "Sync output",
+  "fleet.snapshot.title": "Fleet snapshot",
+  "fleet.snapshot.sameRefresh": "Counts follow the same refresh as the node cards below (Refresh / after sync).",
+  "fleet.snapshot.total": "Nodes",
+  "fleet.snapshot.online": "Online",
+  "fleet.snapshot.offline": "Offline",
+  "fleet.snapshot.drifted": "Drift",
 
   "desiredState.title": "Desired State",
   "desiredState.mapsTo": "Maps to",
@@ -101,6 +107,13 @@ export const en = {
     "Another Live Logs tab connected recently; each tab opens its own WebSocket (multiple open tabs increase upstream polling).",
   "liveLogs.mergeReorderNote":
     "Merge order: when entry times are within about 1.5s, rows may follow arrival order instead of strict wall-clock order.",
+  "liveLogs.scope.label": "Show",
+  "liveLogs.scope.all": "All nodes",
+  "liveLogs.scope.onlineOnly": "Online nodes only",
+  "liveLogs.scope.nodeOption": "{name} (id {id})",
+  "liveLogs.scope.filterEmpty": "No rows match this filter. Change scope or wait for new logs.",
+  "liveLogs.scope.footer":
+    "Scope only hides rows in this tab; WebSocket + merge still receive all nodes. Scroll / older_than paging walks the visible list’s tail so it stays aligned with the filtered table.",
   "liveLogs.systemMessages": "System messages",
   "liveLogs.systemEmpty": "(none)",
   "liveLogs.col.time": "Time",

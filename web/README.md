@@ -87,6 +87,8 @@ The **`/live-logs`** merged table uses viewport virtualization (`@tanstack/react
 
 **Before merging Live Logs UI changes**, run that production build and briefly confirm: scroll to the true bottom (including the optional history status row), bottom `IntersectionObserver` still triggers `older_than` loads, short-table auto-fill stays bounded, WebSocket prepend stress (plan: ≥10s or ≥30 messages) keeps the viewport anchor acceptable, Sheet detail opens from a row. ESLint may report `react-hooks/incompatible-library` on `useVirtualizer` (TanStack + React Compiler); the code uses a ref for `measure()` so layout/resize effects do not depend on the virtualizer object identity each render.
 
+**Scope filter (All / online only / one node)** on `/live-logs` only hides rows in the table; the in-memory merge and WebSocket stream still carry every node. **`older_than` pagination, scroll-to-bottom, and the bottom `IntersectionObserver` pick the next page using the tail of that visible (filtered) list**, so deep history stays tied to what you are looking at, not the hidden global buffer tail.
+
 **Profiler（人工门槛）**：性能相关改动请在 **同机**、**production build** 下用 React Profiler 各录一段前后对比，关注 **Scripting** / **Layout** 与 `LiveLogsPage` 的 commit 次数；首屏多节点 REST 在 **无** `fingerprint` 时仍有 **每行 SHA-256** 成本（与 WS 尾包 digest 不同线）。无 `fingerprint` 的 WS 待处理批次在客户端以 **有界并发**（`live-logs/page.tsx` 内常量）跑 `buildLogRow`，避免无界 `Promise.all` 拉长单帧尖峰。
 
 ## Production build（嵌入二进制 / Docker）

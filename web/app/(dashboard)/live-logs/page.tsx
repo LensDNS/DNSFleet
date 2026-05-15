@@ -15,7 +15,14 @@ import {
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -24,7 +31,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { isSkipAdminAuth } from "@/lib/auth-token";
-import type { WsLogMessage } from "@/lib/dnsfleet-types";
+import type { NodeDTO, WsLogMessage } from "@/lib/dnsfleet-types";
 import {
   entryDetailSections,
   entryTimeToMs,
@@ -209,6 +216,8 @@ export default function LiveLogsPage() {
   const [detail, setDetail] = useState<LogRow | null>(null);
   const [initialLoad, setInitialLoad] = useState<"loading" | "ready">("loading");
   const [nodeTails, setNodeTails] = useState<Record<number, NodeTailState>>({});
+  const [fleetNodes, setFleetNodes] = useState<NodeDTO[]>([]);
+  const [logScopeFilter, setLogScopeFilter] = useState<string>("all");
 
   const logRowsRef = useRef(logRows);
   const nodeTailsRef = useRef(nodeTails);
@@ -227,6 +236,7 @@ export default function LiveLogsPage() {
   /** After user scrolls near the bottom once, short-viewport autoFill may chase `older_than` (see autoFill effect). */
   const userEngagedBottomRef = useRef(false);
   const pageSession = useRef(0);
+  const visibleRowsRef = useRef<LogRow[]>([]);
   const pendingWsEntries = useRef<
     {
       nodeId: number;
@@ -238,11 +248,27 @@ export default function LiveLogsPage() {
   >([]);
   const wsFlushRaf = useRef<number | null>(null);
 
+  const onlineNodeIds = useMemo(
+    () => new Set(fleetNodes.filter((n) => n.online).map((n) => n.id)),
+    [fleetNodes],
+  );
+
+  const visibleRows = useMemo(() => {
+    if (logScopeFilter === "all") return logRows;
+    if (logScopeFilter === "online") {
+      return logRows.filter((r) => onlineNodeIds.has(r.nodeId));
+    }
+    if (!logScopeFilter.startsWith("node:")) return logRows;
+    const nid = Number(logScopeFilter.slice("node:".length));
+    if (!Number.isFinite(nid)) return logRows;
+    return logRows.filter((r) => r.nodeId === nid);
+  }, [logRows, logScopeFilter, onlineNodeIds]);
+
   // TanStack's virtualizer identity can change every render; drive layout/resize measure() via ref
   // so effects do not resubscribe every frame. React Compiler skips memoizing this hook (see eslint below).
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack useVirtualizer; measure paths use rowVirtualizerRef
   const rowVirtualizer = useVirtualizer({
-    count: logRows.length,
+    count: visibleRows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 56,
     overscan: 6,
@@ -302,6 +328,10 @@ export default function LiveLogsPage() {
   }, [pausedDeep]);
 
   useEffect(() => {
+    visibleRowsRef.current = visibleRows;
+  }, [visibleRows]);
+
+  useEffect(() => {
     const session = pageSession;
     return () => {
       session.current += 1;
@@ -327,7 +357,7 @@ export default function LiveLogsPage() {
     const now = Date.now();
     if (now < olderCooldownUntil.current) return;
 
-    const rows = logRowsRef.current;
+    const rows = visibleRowsRef.current;
     const tails = nodeTailsRef.current;
     const paused = pausedDeepRef.current;
     if (rows.length === 0) return;
@@ -425,17 +455,25 @@ export default function LiveLogsPage() {
     const ids = Object.keys(nodeTails)
       .map(Number)
       .filter((id) => Number.isFinite(id));
-    if (ids.length === 0) return null;
-    const exhausted = ids.filter((id) => {
+    const inScope = (id: number) => {
+      if (logScopeFilter === "all") return true;
+      if (logScopeFilter === "online") return onlineNodeIds.has(id);
+      if (!logScopeFilter.startsWith("node:")) return true;
+      const want = Number(logScopeFilter.slice("node:".length));
+      return Number.isFinite(want) && id === want;
+    };
+    const scoped = ids.filter(inScope);
+    if (scoped.length === 0) return null;
+    const exhausted = scoped.filter((id) => {
       const s = nodeTails[id];
       return !s || s.exhausted || s.nextOlderThan === null;
     });
     if (exhausted.length === 0) return null;
-    if (exhausted.length === ids.length) {
+    if (exhausted.length === scoped.length) {
       return t("liveLogs.history.allExhausted");
     }
     return t("liveLogs.history.partialExhausted");
-  }, [nodeTails, t]);
+  }, [nodeTails, logScopeFilter, onlineNodeIds, t]);
 
   useLayoutEffect(() => {
     if (logRows.length === 0 || initialLoad !== "ready") return;
@@ -443,7 +481,7 @@ export default function LiveLogsPage() {
       rowVirtualizerRef.current.measure();
     });
     return () => cancelAnimationFrame(id);
-  }, [logRows.length, initialLoad, locale, historyStatusMessage]);
+  }, [logRows.length, initialLoad, locale, historyStatusMessage, visibleRows.length]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -477,7 +515,7 @@ export default function LiveLogsPage() {
     if (autoFillBursts.current >= 9) return;
     autoFillBursts.current += 1;
     void loadOlderPage();
-  }, [logRows.length, nodeTails, initialLoad, loadOlderPage]);
+  }, [logRows.length, nodeTails, initialLoad, loadOlderPage, visibleRows.length]);
 
   useEffect(() => {
     if (initialLoad !== "ready") return;
@@ -494,7 +532,7 @@ export default function LiveLogsPage() {
     );
     io.observe(sent);
     return () => io.disconnect();
-  }, [initialLoad, loadOlderPage, logRows.length, historyStatusMessage]);
+  }, [logRows.length, nodeTails, initialLoad, loadOlderPage, visibleRows.length, historyStatusMessage]);
 
   useEffect(() => {
     const gen = ++fetchGen.current;
@@ -506,6 +544,7 @@ export default function LiveLogsPage() {
       try {
         const nodes = await fetchNodes(ac.signal);
         if (gen !== fetchGen.current) return;
+        setFleetNodes(nodes);
         const online = nodes.filter((n) => n.online);
         if (online.length === 0) {
           setNodeTails({});
@@ -785,19 +824,18 @@ export default function LiveLogsPage() {
     };
   }, [locale]);
 
-  // Recomputes whenever `logRows` identity changes; downstream `operatorLastLog` / `operatorSummary` skip work when the string is unchanged.
   const firstRowSummaryKey = useMemo(() => {
-    const last = logRows[0];
+    const last = visibleRows[0];
     if (!last) return "";
     return `${last.dedupeKey}\t${last.timeMs}\t${last.receivedAt ?? ""}\t${stableEntryTimeToken(last.entry.time)}`;
-  }, [logRows]);
+  }, [visibleRows]);
 
   const operatorLastLog = useMemo(() => {
     if (!firstRowSummaryKey) return "—";
-    const last = logRows[0];
+    const last = visibleRows[0];
     if (!last) return "—";
     return formatDisplayTime(last.entry.time, last.receivedAt, locale);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- Row-0 display inputs are summarized in firstRowSummaryKey; omit logRows to avoid recomputing on unrelated tail churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- firstRowSummaryKey captures visible row-0 identity for tail churn.
   }, [firstRowSummaryKey, locale]);
 
   const operatorSummary = useMemo(() => {
@@ -828,7 +866,7 @@ export default function LiveLogsPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div>
+      <div className="shrink-0">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("liveLogs.title")}</h1>
         <p className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
           <span className="text-muted-foreground">{t("liveLogs.riskNotice")}</span>
@@ -844,18 +882,46 @@ export default function LiveLogsPage() {
           <p className="text-muted-foreground mt-0.5 text-xs">{t("liveLogs.multiTabHint")}</p>
         ) : null}
         <p className="text-muted-foreground mt-0.5 text-[11px] leading-snug">{t("liveLogs.mergeReorderNote")}</p>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <Label htmlFor="live-logs-scope" className="text-muted-foreground shrink-0 text-xs">
+            {t("liveLogs.scope.label")}
+          </Label>
+          <Select
+            value={logScopeFilter}
+            onValueChange={(v) => {
+              if (v != null && v !== "") setLogScopeFilter(v);
+            }}
+          >
+            <SelectTrigger id="live-logs-scope" className="w-full sm:max-w-md">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("liveLogs.scope.all")}</SelectItem>
+              <SelectItem value="online">{t("liveLogs.scope.onlineOnly")}</SelectItem>
+              {fleetNodes
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((n) => (
+                  <SelectItem key={n.id} value={`node:${n.id}`}>
+                    {interpolate(t("liveLogs.scope.nodeOption"), { name: n.name, id: String(n.id) })}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <p className="text-muted-foreground mt-1 text-[11px] leading-snug">{t("liveLogs.scope.footer")}</p>
       </div>
 
       <section aria-label={t("liveLogs.systemMessages")} className="shrink-0 rounded-md border border-border bg-muted/20">
-        <details open className="group">
+        <details className="group">
           <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium marker:hidden [&::-webkit-details-marker]:hidden">
             <span className="text-muted-foreground">{t("liveLogs.systemMessages")}</span>{" "}
             <Badge variant="secondary" className="ml-1 font-mono text-[10px]">
               {systemLines.length}
             </Badge>
           </summary>
-          <ScrollArea className="max-h-36 px-2">
-            <ul className="space-y-1 pb-2 font-mono text-[11px] text-muted-foreground">
+          <div className="max-h-36 overflow-y-auto px-2 pb-2">
+            <ul className="space-y-1 font-mono text-[11px] text-muted-foreground">
               {systemLines.length === 0 ? (
                 <li className="px-1 py-1 text-muted-foreground">{t("liveLogs.systemEmpty")}</li>
               ) : (
@@ -869,7 +935,7 @@ export default function LiveLogsPage() {
                 ))
               )}
             </ul>
-          </ScrollArea>
+          </div>
         </details>
       </section>
 
@@ -915,6 +981,12 @@ export default function LiveLogsPage() {
                     {t("liveLogs.empty")}
                   </td>
                 </tr>
+              ) : visibleRows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                    {t("liveLogs.scope.filterEmpty")}
+                  </td>
+                </tr>
               ) : (
                 <>
                   {(() => {
@@ -933,7 +1005,7 @@ export default function LiveLogsPage() {
                           </tr>
                         ) : null}
                         {items.map((vi) => {
-                          const row = logRows[vi.index];
+                          const row = visibleRows[vi.index];
                           if (!row) return null;
                           return (
                             <LogTableRow

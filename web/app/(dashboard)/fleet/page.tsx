@@ -182,6 +182,14 @@ export default function FleetPage() {
     [nodes, selected],
   );
 
+  const fleetSnapshot = useMemo(() => {
+    const total = nodes.length;
+    const online = nodes.filter((n) => n.online).length;
+    const offline = total - online;
+    const drifted = nodes.filter((n) => n.drifted).length;
+    return { total, online, offline, drifted };
+  }, [nodes]);
+
   function openAdd() {
     setDialogMode("add");
     setEditId(null);
@@ -380,6 +388,41 @@ export default function FleetPage() {
           </Button>
         </div>
       </div>
+
+      {!loading && nodes.length > 0 ? (
+        <Card className="border-dashed">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t("fleet.snapshot.title")}</CardTitle>
+            <CardDescription className="text-xs">{t("fleet.snapshot.sameRefresh")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div>
+                <dt className="text-muted-foreground text-xs">{t("fleet.snapshot.total")}</dt>
+                <dd className="text-lg font-semibold tabular-nums">{fleetSnapshot.total}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground text-xs">{t("fleet.snapshot.online")}</dt>
+                <dd className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {fleetSnapshot.online}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground text-xs">{t("fleet.snapshot.offline")}</dt>
+                <dd className="text-lg font-semibold tabular-nums text-amber-700 dark:text-amber-500">
+                  {fleetSnapshot.offline}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground text-xs">{t("fleet.snapshot.drifted")}</dt>
+                <dd className="text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                  {fleetSnapshot.drifted}
+                </dd>
+              </div>
+            </dl>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {loading && nodes.length === 0 ? (
         <p className="text-muted-foreground text-sm">{t("fleet.loadingNodes")}</p>

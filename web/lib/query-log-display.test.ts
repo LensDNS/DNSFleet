@@ -7,6 +7,7 @@ import {
   extractClientPresentation,
   formatDisplayTime,
   formatElapsedMsLabel,
+  formatResponseSummaryLine,
   inferResultKind,
   inferRowTone,
   isSlowQuery,
@@ -51,6 +52,19 @@ describe("normalizeEntry", () => {
     });
     expect(n.clientPrimary).toBe("10.0.0.2");
     expect(n.clientSecondary).toBe("");
+  });
+
+  it("does not duplicate cache hint in response summary line", () => {
+    const n = normalizeEntry({
+      cached: true,
+      status: "NOERROR",
+      elapsedMs: 12,
+      question: { name: "example.com", type: "A" },
+    });
+    expect(n.responseExtra).toBe("");
+    const line = formatResponseSummaryLine(n);
+    expect(line).toBe("NOERROR · 12 ms");
+    expect(line.toLowerCase()).not.toContain("cached");
   });
 });
 

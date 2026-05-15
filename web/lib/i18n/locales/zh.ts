@@ -81,6 +81,12 @@ export const zh: Record<LocaleKey, string> = {
   "fleet.delete.title": "删除节点？",
   "fleet.delete.description": "将永久删除「{name}」（id={id}），不可恢复。",
   "fleet.syncTerminal.title": "同步输出",
+  "fleet.snapshot.title": "机群快照",
+  "fleet.snapshot.sameRefresh": "与下方节点卡片使用同一刷新来源（「刷新」或同步完成后重新加载列表）。",
+  "fleet.snapshot.total": "节点总数",
+  "fleet.snapshot.online": "在线",
+  "fleet.snapshot.offline": "离线",
+  "fleet.snapshot.drifted": "漂移",
 
   "desiredState.title": "期望配置",
   "desiredState.mapsTo": "对应",
@@ -103,6 +109,13 @@ export const zh: Record<LocaleKey, string> = {
     "近期有其他「实时日志」标签页在连接；每个标签页会各自建立 WebSocket（多标签常驻会增加上游轮询）。",
   "liveLogs.mergeReorderNote":
     "合并顺序：相邻 entry 时间相差约 1.5 秒以内时，可能按到达先后显示，而非严格墙钟序列。",
+  "liveLogs.scope.label": "显示范围",
+  "liveLogs.scope.all": "全部节点",
+  "liveLogs.scope.onlineOnly": "仅在线节点",
+  "liveLogs.scope.nodeOption": "{name}（id {id}）",
+  "liveLogs.scope.filterEmpty": "当前过滤下没有可显示的行。请更换范围或等待新日志。",
+  "liveLogs.scope.footer":
+    "范围仅影响本页表格展示；WebSocket 与内存合并仍接收全部节点。滚底与 older_than 分页按「可见列表」尾部选择节点，与过滤后的表格对齐。",
   "liveLogs.systemMessages": "系统消息",
   "liveLogs.systemEmpty": "（暂无）",
   "liveLogs.col.time": "时间",
